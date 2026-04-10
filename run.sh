@@ -8,14 +8,12 @@ fi
 
 PROJECT_DIR="$(realpath "$1")"
 CONTAINER="master"
-MAIN_CLASS="GtfsPipeline"
 DATA="$(realpath "$2")"
 GTFS_DIR="$DATA/gtfs"
 MASTER_DATA="/tmp/data"
-MASTER_GTFS="$MASTER_DATA/gtfs"
-MASTER_JAR="$MASTER_DATA/mapreduce-1.0-SNAPSHOT.jar"
 
-HDFS_INPUT="/user/hadoop/gtfs"
+
+HDFS_INPUT="/user/hadoop"
 HDFS_OUT_E11="/user/hadoop/t1_1"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
@@ -39,7 +37,7 @@ cd ../..
 docker ps --format '{{.Names}}' | grep -q "^${CONTAINER}$" \
   || error "Kontener '$CONTAINER' nie działa"
 
-info "==> [1/3] Budowanie fat jar..."
+info "==> Budowanie fat jar..."
 cd "$PROJECT_DIR"
 mvn clean package -DskipTests -q || error "Maven build nie powiódł się"
 
@@ -49,34 +47,52 @@ JAR_PATH=$(find "$PROJECT_DIR/target" -maxdepth 1 -name "*.jar" \
 info "Jar: $JAR_PATH"
 cp "$JAR_PATH" "$DATA/"
 
-info "==> [2/3] Wgrywanie danych do HDFS..."
+info "==> Wgrywanie danych do HDFS..."
 docker cp $DATA $CONTAINER:$MASTER_DATA
 docker exec "$CONTAINER" bash -c "
   set -e
   hdfs dfsadmin -safemode wait
-
-  hdfs dfs -rm -r -f $HDFS_OUT_E11 2>/dev/null || true
-
-  if ! hdfs dfs -test -d $HDFS_INPUT; then
-    hdfs dfs -mkdir -p $HDFS_INPUT
-    hdfs dfs -put $MASTER_GTFS/* $HDFS_INPUT/
-    echo 'Dane GTFS wgrane do HDFS'
-  else
-    echo 'Dane GTFS już w HDFS, pomijam'
-  fi
+  hdfs dfs -mkdir -p $HDFS_INPUT
+  hdfs dfs -put $MASTER_DATA $HDFS_INPUT/
 
   echo 'Pliki w HDFS:'
-  hdfs dfs -ls $HDFS_INPUT
+  hdfs dfs -ls -R $HDFS_INPUT
 "
 
-info "==> [3/3] Uruchamianie MapReduce job..."
-docker exec "$CONTAINER" bash -c "
-  set -e
-  yarn jar $MASTER_JAR $MAIN_CLASS \
-    $HDFS_INPUT/stop_times.txt \
-    $HDFS_INPUT \
-    $HDFS_OUT_E11
-"
+run_e1_1() {
+  MASTER_JAR="$MASTER_DATA/mapreduce-1.0-SNAPSHOT.jar"
+  MAIN_CLASS="gtfs.GtfsPipeline"
 
-info "==> Kopiowanie wyników T1.1:"
-docker exec master bash -c "hdfs dfs -get /user/hadoop/t1_1 /data/hadoop/wyniki_t1_1"
+
+  info "==> Uruchamianie e1_1 MapReduce job..."
+  docker exec "$CONTAINER" bash -c "
+    set -e
+    yarn jar $MASTER_JAR $MAIN_CLASS \
+      $HDFS_INPUT/gtfs/stop_times.txt \
+      $HDFS_INPUT/gtfs \
+      $HDFS_OUT_E11
+  "
+
+  info "==> Kopiowanie wyników T1.1:"
+  docker exec master bash -c "hdfs dfs -get /user/hadoop/t1_1 /data/hadoop/t1_1"
+}
+
+run_e1_2() {
+
+}
+
+run_e1_3() {
+
+}
+
+run_e1_5() {
+
+}
+
+run_e2() {
+
+}
+
+run_e3() {
+
+}

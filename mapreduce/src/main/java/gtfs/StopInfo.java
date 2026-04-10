@@ -1,3 +1,5 @@
+package gtfs;
+
 import com.github.davidmoten.geo.GeoHash;
 
 public class StopInfo {
