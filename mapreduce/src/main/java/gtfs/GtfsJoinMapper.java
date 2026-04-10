@@ -12,7 +12,7 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 
-public class GtfsJoinMapper extends Mapper<LongWritable, Text, Text, Text> {
+public class GtfsJoinMapper extends Mapper<LongWritable, Text, Text, StopTime> {
 
     private final Map<String, String>   tripToRoute    = new HashMap<>();
     private final Map<String, String>   tripToService  = new HashMap<>();
@@ -21,7 +21,7 @@ public class GtfsJoinMapper extends Mapper<LongWritable, Text, Text, Text> {
     private final Map<String, StopInfo> stopInfo       = new HashMap<>();
 
     private Text outKey   = new Text();
-    private Text outValue = new Text();
+    private StopTime outValue = new StopTime();
 
     private FileSystem fs;
 
@@ -154,13 +154,7 @@ public class GtfsJoinMapper extends Mapper<LongWritable, Text, Text, Text> {
         if (stop == null) return;
 
         outKey.set(stop.geoId);
-        outValue.set(String.join("|",
-                stopId,
-                String.valueOf(stop.lat),
-                String.valueOf(stop.lon),
-                stop.geoId,
-                routeType,
-                arrivalTime));
+        outValue.set(stopId, stop.lat, stop.lon, stop.geoId, routeType, arrivalTime);
 
         context.write(outKey, outValue);
     }
