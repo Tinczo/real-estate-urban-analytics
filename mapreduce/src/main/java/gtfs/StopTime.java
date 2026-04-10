@@ -50,4 +50,20 @@ public class StopTime implements Writable {
     public String toString() {
         return stopId + "|" + lat + "|" + lon + "|" + geoId + "|" + routeType + "|" + arrivalTime;
     }
+
+    public String getArrivalTime() {
+        return arrivalTime;
+    }
+
+    public String getStopId() {
+        return stopId;
+    }
+
+    public double getLat() {
+        return lat;
+    }
+
+    public double getLon(){
+        return lon;
+    }
 }

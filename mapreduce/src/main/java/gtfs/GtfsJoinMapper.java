@@ -153,7 +153,7 @@ public class GtfsJoinMapper extends Mapper<LongWritable, Text, Text, StopTime> {
         StopInfo stop = stopInfo.get(stopId);
         if (stop == null) return;
 
-        outKey.set(stop.geoId);
+        outKey.set(stopId);
         outValue.set(stopId, stop.lat, stop.lon, stop.geoId, routeType, arrivalTime);
 
         context.write(outKey, outValue);

@@ -1,24 +1,60 @@
 #!/bin/bash
 set -euo pipefail
 
-if [ $# -lt 2 ]; then
-  echo "Użycie: $0 <ścieżka_do_projektu> <ścieżka_do_danych>"
+if [ $# -lt 3 ]; then
+  echo "Użycie: $0 <ścieżka_do_projektu> <ścieżka_do_danych> <job_flag>"
   exit 1
 fi
 
+JOB_FLAG="$3"
 PROJECT_DIR="$(realpath "$1")"
 CONTAINER="master"
 DATA="$(realpath "$2")"
 GTFS_DIR="$DATA/gtfs"
 MASTER_DATA="/tmp/data"
 
-
 HDFS_INPUT="/user/hadoop"
 HDFS_OUT_E11="/user/hadoop/t1_1"
+HDFS_OUT_E15="/user/hadoop/t1_5"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 info()  { echo -e "${GREEN}[INFO]${NC}  $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
+
+run_e1_1() {
+  MASTER_JAR="$MASTER_DATA/mapreduce-1.0-SNAPSHOT.jar"
+  MAIN_CLASS="gtfs.GtfsE11"
+
+  info "==> Uruchamianie e1_1 MapReduce job..."
+  docker exec "$CONTAINER" bash -c "
+    set -e
+    yarn jar $MASTER_JAR $MAIN_CLASS \
+      $HDFS_INPUT/data/gtfs/stop_times.txt \
+      $HDFS_INPUT/data/gtfs \
+      $HDFS_OUT_E11
+  "
+
+  info "==> Kopiowanie wyników T1.1:"
+  docker exec master bash -c "hdfs dfs -get /user/hadoop/t1_1 /data/hadoop/t1_1"
+  cp -r /tmp/hadoop/t1_1 $DATA/ 
+}
+
+run_e1_5() {
+  MASTER_JAR="$MASTER_DATA/mapreduce-1.0-SNAPSHOT.jar"
+  MAIN_CLASS="gtfs.GtfsE15"
+
+  info "==> Uruchamianie e1_5 MapReduce job..."
+  docker exec "$CONTAINER" bash -c "
+    set -e
+    yarn jar $MASTER_JAR $MAIN_CLASS \
+      $HDFS_INPUT/data/t1_1 \
+      $HDFS_OUT_E15
+  "
+
+  info "==> Kopiowanie wyników T1.5:"
+  docker exec master bash -c "hdfs dfs -get /user/hadoop/t1_5 /data/hadoop/t1_5"
+  cp -r /tmp/hadoop/t1_5 $DATA/ 
+}
 
 [ -d "$PROJECT_DIR" ]         || error "Brak katalogu projektu: $PROJECT_DIR"
 [ -f "$PROJECT_DIR/pom.xml" ] || error "Brak pom.xml w $PROJECT_DIR"
@@ -59,40 +95,14 @@ docker exec "$CONTAINER" bash -c "
   hdfs dfs -ls -R $HDFS_INPUT
 "
 
-run_e1_1() {
-  MASTER_JAR="$MASTER_DATA/mapreduce-1.0-SNAPSHOT.jar"
-  MAIN_CLASS="gtfs.GtfsE11"
-
-
-  info "==> Uruchamianie e1_1 MapReduce job..."
-  docker exec "$CONTAINER" bash -c "
-    set -e
-    yarn jar $MASTER_JAR $MAIN_CLASS \
-      $HDFS_INPUT/gtfs/stop_times.txt \
-      $HDFS_INPUT/gtfs \
-      $HDFS_OUT_E11
-  "
-
-  info "==> Kopiowanie wyników T1.1:"
-  docker exec master bash -c "hdfs dfs -get /user/hadoop/t1_1 /data/hadoop/t1_1"
-}
-
-run_e1_2() {
-
-}
-
-run_e1_3() {
-
-}
-
-run_e1_5() {
-
-}
-
-run_e2() {
-
-}
-
-run_e3() {
-
-}
+case "$JOB_FLAG" in
+  e1_1|1.1)
+    run_e1_1
+    ;;
+  e1_5|1.5)
+    run_e1_5
+    ;;
+  *)
+    error "Nieznana flaga zadania: '$JOB_FLAG'. Dostępne opcje: e1_1, e1_5"
+    ;;
+esac

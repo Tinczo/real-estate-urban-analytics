@@ -6,6 +6,8 @@ import org.apache.hadoop.io.*;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+import org.apache.hadoop.mapreduce.lib.output.SequenceFileOutputFormat;
+
 import java.net.URI;
 
 public class GtfsE11 {
@@ -22,7 +24,8 @@ public class GtfsE11 {
         job11.setNumReduceTasks(0);
 
         job11.setOutputKeyClass(Text.class);
-        job11.setOutputValueClass(Text.class);
+        job11.setOutputValueClass(StopTime.class);
+        job11.setOutputFormatClass(SequenceFileOutputFormat.class);
 
         FileInputFormat.addInputPath(job11, new Path(args[0])); // stop_times.txt
         FileOutputFormat.setOutputPath(job11, new Path(args[2]));
