@@ -61,7 +61,7 @@ docker exec "$CONTAINER" bash -c "
 
 run_e1_1() {
   MASTER_JAR="$MASTER_DATA/mapreduce-1.0-SNAPSHOT.jar"
-  MAIN_CLASS="gtfs.GtfsPipeline"
+  MAIN_CLASS="gtfs.GtfsE11"
 
 
   info "==> Uruchamianie e1_1 MapReduce job..."

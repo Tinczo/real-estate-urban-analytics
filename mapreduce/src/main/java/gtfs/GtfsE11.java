@@ -8,7 +8,7 @@ import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import java.net.URI;
 
-public class GtfsPipeline {
+public class GtfsE11 {
 
     public static void main(String[] args) throws Exception {
         // args: [0]=stop_times  [1]=cache_dir  [2]=out_e11
@@ -16,7 +16,7 @@ public class GtfsPipeline {
         Configuration conf11 = new Configuration();
         Job job11 = Job.getInstance(conf11, "E1.1 GTFS Extraction + Map Side Join");
 
-        job11.setJarByClass(GtfsPipeline.class);
+        job11.setJarByClass(GtfsE11.class);
         job11.setMapperClass(GtfsJoinMapper.class);
 
         job11.setNumReduceTasks(0);
