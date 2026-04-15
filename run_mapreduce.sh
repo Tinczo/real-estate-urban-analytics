@@ -69,7 +69,7 @@ done
 
 cd hadoop-eco/docker-script
 ./compose-down.sh
-./compose-up.sh 3.3.0 3 /tmp/hadoop /tmp/hadoop_logs /tmp/hbase_logs /tmp/hive_logs /tmp/sqoop_logs mariadb /Users/Shared/workspace/docker-ws/maria-data
+./compose-up.sh 3.3.0 3 /tmp/hadoop /tmp/hadoop_logs /tmp/hbase_logs /tmp/hive_logs /tmp/sqoop_logs mariadb $HOME/workspace/mardia-data
 tmux has-session -t hadoop 2>/dev/null || tmux new-session -d -s hadoop './hadoop-start.sh start'
 cd ../..
 

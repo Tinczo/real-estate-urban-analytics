@@ -1,0 +1,142 @@
+services:
+  jupyter-lab:
+    image: hjben/jupyter-lab:spark-3.4.0
+    hostname: jupyter-lab
+    container_name: jupyter-lab
+    cgroup: host
+    privileged: true
+    ports:
+      - 8888:8888
+      - 4040-4044:4040-4044
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - $HOME/workspace/spark-notebook:/root/workspace
+    networks:
+      hadoop-cluster:
+        ipv4_address: 10.0.2.2
+    extra_hosts:
+      - "jupyter-lab:10.0.2.2"
+      - "spark:10.0.2.3"
+      - "master:10.0.2.4"
+      - "slave1:10.0.2.5"
+      - "slave2:10.0.2.6"
+      - "slave3:10.0.2.7"
+
+  spark:
+    image: hjben/spark:3.4.0-livy
+    hostname: spark
+    container_name: spark
+    cgroup: host
+    privileged: true
+    ports:
+      - 8080-8081:8080-8081
+      - 8998:8998
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - $HOME/workspace/spark-notebook:/root/workspace
+      - /tmp/spark_logs/master:/usr/local/spark/logs 
+    networks:
+      hadoop-cluster:
+        ipv4_address: 10.0.2.3
+    extra_hosts:
+      - "jupyter-lab:10.0.2.2"
+      - "spark:10.0.2.3"
+      - "master:10.0.2.4"
+      - "slave1:10.0.2.5"
+      - "slave2:10.0.2.6"
+      - "slave3:10.0.2.7"
+
+  master:
+    image: hjben/hadoop:3.3.5-jdk1.8.0
+    hostname: master
+    container_name: master
+    cgroup: host
+    privileged: true
+    ports:
+      - 8088:8088
+      - 9870:9870
+      - 8042:8042
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - /tmp/hadoop:/data/hadoop
+      - /tmp/hadoop_logs:/usr/local/hadoop/logs
+    networks:
+      hadoop-cluster:
+        ipv4_address: 10.0.2.4
+    extra_hosts:
+      - "jupyter-lab:10.0.2.2"
+      - "spark:10.0.2.3"
+      - "master:10.0.2.4"
+      - "slave1:10.0.2.5"
+      - "slave2:10.0.2.6"
+      - "slave3:10.0.2.7"
+
+  slave1:
+    image: hjben/hadoop:3.3.5-jdk1.8.0
+    hostname: slave1
+    container_name: slave1
+    cgroup: host
+    privileged: true
+    ports:
+      - 18042:8042
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    networks:
+      hadoop-cluster:
+        ipv4_address: 10.0.2.5
+    extra_hosts:
+      - "jupyter-lab:10.0.2.2"
+      - "spark:10.0.2.3"
+      - "master:10.0.2.4"
+      - "slave1:10.0.2.5"
+      - "slave2:10.0.2.6"
+      - "slave3:10.0.2.7"
+
+  slave2:
+    image: hjben/hadoop:3.3.5-jdk1.8.0
+    hostname: slave2
+    container_name: slave2
+    cgroup: host
+    privileged: true
+    ports:
+      - 28042:8042
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    networks:
+      hadoop-cluster:
+        ipv4_address: 10.0.2.6
+    extra_hosts:
+      - "jupyter-lab:10.0.2.2"
+      - "spark:10.0.2.3"
+      - "master:10.0.2.4"
+      - "slave1:10.0.2.5"
+      - "slave2:10.0.2.6"
+      - "slave3:10.0.2.7"
+
+  slave3:
+    image: hjben/hadoop:3.3.5-jdk1.8.0
+    hostname: slave3
+    container_name: slave3
+    cgroup: host
+    privileged: true
+    ports:
+      - 38042:8042
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    networks:
+      hadoop-cluster:
+        ipv4_address: 10.0.2.7
+    extra_hosts:
+      - "jupyter-lab:10.0.2.2"
+      - "spark:10.0.2.3"
+      - "master:10.0.2.4"
+      - "slave1:10.0.2.5"
+      - "slave2:10.0.2.6"
+      - "slave3:10.0.2.7"
+
+networks:
+ hadoop-cluster:
+  ipam:
+   driver: default
+   config:
+   - subnet: 10.0.2.0/24
