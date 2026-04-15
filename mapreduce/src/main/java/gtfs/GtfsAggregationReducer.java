@@ -27,6 +27,7 @@ public class GtfsAggregationReducer extends Reducer<Text, StopInfo, Text, StopIn
         }
 
         finalInfo.score = totalScore;
+        key.set(finalInfo.geoId);
         context.write(key, finalInfo);
     }
 }

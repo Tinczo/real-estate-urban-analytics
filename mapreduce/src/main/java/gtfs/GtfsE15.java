@@ -13,7 +13,7 @@ public class GtfsE15 {
 
     public static void main(String[] args) throws Exception {
         Configuration conf15 = new  Configuration();
-        Job job15 =  Job.getInstance(conf15, "E1.1 GTFS Extraction");
+        Job job15 =  Job.getInstance(conf15, "E1.5 GTFS Stop Score");
         job15.setJarByClass(GtfsE15.class);
 
         job15.setMapperClass(GtfsAggregationMapper.class);
@@ -23,7 +23,7 @@ public class GtfsE15 {
         job15.setOutputValueClass(StopInfo.class);
 
         job15.setInputFormatClass(SequenceFileInputFormat.class);
-        job15.setOutputFormatClass(SequenceFileOutputFormat.class);
+//        job15.setOutputFormatClass(SequenceFileOutputFormat.class);
         FileInputFormat.addInputPath(job15, new Path(args[0]));
         FileOutputFormat.setOutputPath(job15, new Path(args[1]));
 

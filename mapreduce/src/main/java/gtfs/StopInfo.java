@@ -22,6 +22,11 @@ public class StopInfo implements Writable {
         this.geoId = GeoHash.encodeHash(lat, lon, 6);
     }
 
+    @Override
+    public String toString(){
+        return geoId + "," + stopId + "," + lat + "," + lon + "," + score;
+    }
+
     public void setForCount(String stopId, double lat, double lon) {
         this.stopId = stopId;
         this.lat = lat;

@@ -36,7 +36,11 @@ run_e1_1() {
 
   info "==> Kopiowanie wyników T1.1:"
   docker exec master bash -c "hdfs dfs -get /user/hadoop/t1_1 /data/hadoop/t1_1"
-  cp -r /tmp/hadoop/t1_1 $DATA/ 
+  docker cp /tmp/hadoop/t1_1 $CONTAINER:$MASTER_DATA/
+  docker exec master bash -c "
+    hdfs dfs -mkdir -p $HDFS_INPUT/data/t1_1
+    hdfs dfs -D dfs.replication=3 -put $MASTER_DATA/t1_1 $HDFS_INPUT/data/
+  " 
 }
 
 run_e1_5() {
@@ -53,7 +57,6 @@ run_e1_5() {
 
   info "==> Kopiowanie wyników T1.5:"
   docker exec master bash -c "hdfs dfs -get /user/hadoop/t1_5 /data/hadoop/t1_5"
-  cp -r /tmp/hadoop/t1_5 $DATA/ 
 }
 
 [ -d "$PROJECT_DIR" ]         || error "Brak katalogu projektu: $PROJECT_DIR"
@@ -78,7 +81,7 @@ cd "$PROJECT_DIR"
 mvn clean package -DskipTests -q || error "Maven build nie powiódł się"
 
 JAR_PATH=$(find "$PROJECT_DIR/target" -maxdepth 1 -name "*.jar" \
-           ! -name "*-sources.jar" ! -name "*-original.jar" | head -1)
+           ! -name "*-sources.jar" ! -name "original-*.jar" | head -1)
 [ -n "$JAR_PATH" ] || error "Nie znaleziono jara w target/"
 info "Jar: $JAR_PATH"
 cp "$JAR_PATH" "$DATA/"
@@ -89,7 +92,7 @@ docker exec "$CONTAINER" bash -c "
   set -e
   hdfs dfsadmin -safemode wait
   hdfs dfs -mkdir -p $HDFS_INPUT
-  hdfs dfs -put $MASTER_DATA $HDFS_INPUT/
+  hdfs dfs -D dfs.replication=3 -put $MASTER_DATA $HDFS_INPUT/
 
   echo 'Pliki w HDFS:'
   hdfs dfs -ls -R $HDFS_INPUT
@@ -100,6 +103,10 @@ case "$JOB_FLAG" in
     run_e1_1
     ;;
   e1_5|1.5)
+    run_e1_5
+    ;;
+  all)
+    run_e1_1
     run_e1_5
     ;;
   *)
