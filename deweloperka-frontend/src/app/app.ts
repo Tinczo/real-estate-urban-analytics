@@ -31,11 +31,9 @@ export class App {
             'interpolate',
             ['linear'],
             ['get', 'render_height'],
-            0,  '#e3f2fd',
-            12, '#90caf9',
-            25, '#5c6bc0',
-            45, '#7e57c2', 
-            80, '#4a148c'
+            0,   '#f8f9fa',
+            45,  '#d9dfe5',
+            80, '#b7c1ca',
           ],
           'fill-extrusion-height': [
             'interpolate',
