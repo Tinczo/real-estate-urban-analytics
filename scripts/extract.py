@@ -12,7 +12,7 @@ REQUIRED_COLS = [
     "Ulica lokalizacji przedsięwzięcia deweloperskiego lub zadania inwestycyjnego",
     "Nr nieruchomości lokalizacji przedsięwzięcia deweloperskiego lub zadania inwestycyjnego",
     "Kod pocztowy lokalizacji przedsięwzięcia deweloperskiego lub zadania inwestycyjnego",
-    "Rodzaj nieruchomości: lokal mieszkalny, dom jednorodzinny ",
+    "Rodzaj nieruchomości: lokal mieszkalny, dom jednorodzinny",
     "Data od której cena obowiązuje cena m 2 powierzchni użytkowej lokalu mieszkalnego / domu jednorodzinnego",
     "Cena m 2 powierzchni użytkowej lokalu mieszkalnego / domu jednorodzinnego [zł]",
     "Cena lokalu mieszkalnego lub domu jednorodzinnego będących przedmiotem umowy stanowiąca iloczyn ceny m2 oraz powierzchni [zł]",
