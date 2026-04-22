@@ -13,6 +13,20 @@ export class App {
   protected readonly title = signal('deweloperka-frontend');
   
   onMapLoad(map: Map) {
+    const layers = map.getStyle()?.layers;
+    let labelLayerId: string | undefined;
+
+    if (layers) {
+      for (let i = 0; i < layers.length; i++) {
+        const layer = layers[i];
+        
+        if (layer.type === 'symbol' && (layer as any).layout?.['text-field']) {
+          labelLayerId = layer.id;
+          break;
+        }
+      }
+    }
+
     map.addSource('openfreemap', {
       url: 'https://tiles.openfreemap.org/planet',
       type: 'vector',
@@ -49,6 +63,7 @@ export class App {
           ]
         }
       },
+      labelLayerId
     );
   }
 }
