@@ -11,23 +11,33 @@ import org.apache.hadoop.mapreduce.lib.output.SequenceFileOutputFormat;
 
 public class GtfsE15 {
 
+    // args: <input> <output> [numReducers] [withCombiner]
+    // numReducers: default 1
+    // withCombiner: "true" to enable, default false
     public static void main(String[] args) throws Exception {
-        Configuration conf15 = new  Configuration();
-        Job job15 =  Job.getInstance(conf15, "E1.5 GTFS Stop Score");
+        int numReducers = args.length >= 3 ? Integer.parseInt(args[2]) : 1;
+        boolean withCombiner = args.length >= 4 && "true".equalsIgnoreCase(args[3]);
+
+        Configuration conf15 = new Configuration();
+        Job job15 = Job.getInstance(conf15,
+                "E1.5 GTFS Stop Score [reducers=" + numReducers + " combiner=" + withCombiner + "]");
         job15.setJarByClass(GtfsE15.class);
 
         job15.setMapperClass(GtfsAggregationMapper.class);
         job15.setReducerClass(GtfsAggregationReducer.class);
+        job15.setNumReduceTasks(numReducers);
+
+        if (withCombiner) {
+            job15.setCombinerClass(GtfsAggregationReducer.class);
+        }
 
         job15.setOutputKeyClass(Text.class);
         job15.setOutputValueClass(StopInfo.class);
 
         job15.setInputFormatClass(SequenceFileInputFormat.class);
-//        job15.setOutputFormatClass(SequenceFileOutputFormat.class);
         FileInputFormat.addInputPath(job15, new Path(args[0]));
         FileOutputFormat.setOutputPath(job15, new Path(args[1]));
 
         if (!job15.waitForCompletion(true)) System.exit(1);
-
     }
 }
