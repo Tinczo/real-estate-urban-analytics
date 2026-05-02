@@ -50,7 +50,8 @@ def geocode_address(address: str) -> tuple:
             cache_hits += 1
             return cache[address]
 
-    cache_miss += 1
+    with cache_lock:
+        cache_miss += 1
 
     url = f"{NOMINATIM_URL}?q={quote(address)}&format=json&limit=1&countrycodes=pl"
     req = Request(url, headers={"User-Agent": "BigDataProject/1.0"})
@@ -162,7 +163,10 @@ def main():
     total = 0
     for fname in sorted(csv_files):
         in_path  = os.path.join(input_dir, fname)
-        out_path = os.path.join(output_dir, fname.replace("part_", "geocoded_") + ".csv")
+        base = fname.replace("part_", "geocoded_")
+        if not base.endswith(".csv"):
+            base += ".csv"
+        out_path = os.path.join(output_dir, base)
         print(f"Przetwarzanie: {fname} ...", end=" ", flush=True)
         count = process_file(in_path, out_path)
         print(f"{count} wierszy")

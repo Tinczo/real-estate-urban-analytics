@@ -156,6 +156,6 @@ public class E2Reducer extends Reducer<Text, JoinRecord, Text, Text> {
     }
 
     private static String fmt(double v) {
-        return String.format("%.6f", v);
+        return String.format(java.util.Locale.US, "%.6f", v);
     }
 }

@@ -98,6 +98,6 @@ public class E3Reducer extends Reducer<Text, IndicatorValues, Text, Text> {
 
     private static String fmt(double v) {
         if (Double.isNaN(v) || Double.isInfinite(v)) return "0.000000";
-        return String.format("%.6f", v);
+        return String.format(java.util.Locale.US, "%.6f", v);
     }
 }

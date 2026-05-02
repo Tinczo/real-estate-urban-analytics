@@ -15,6 +15,10 @@ public class GtfsE15 {
     // numReducers: default 1
     // withCombiner: "true" to enable, default false
     public static void main(String[] args) throws Exception {
+        if (args.length < 2) {
+            System.err.println("Użycie: GtfsE15 <input> <output> [numReducers] [withCombiner]");
+            System.exit(1);
+        }
         int numReducers = args.length >= 3 ? Integer.parseInt(args[2]) : 1;
         boolean withCombiner = args.length >= 4 && "true".equalsIgnoreCase(args[3]);
 
@@ -28,7 +32,7 @@ public class GtfsE15 {
         job15.setNumReduceTasks(numReducers);
 
         if (withCombiner) {
-            job15.setCombinerClass(GtfsAggregationReducer.class);
+            job15.setCombinerClass(GtfsCombiner.class);
         }
 
         job15.setOutputKeyClass(Text.class);

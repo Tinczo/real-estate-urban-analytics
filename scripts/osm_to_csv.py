@@ -139,6 +139,7 @@ def main():
                 F.col("category"),
                 F.col("waga_obiektu")
             )
+            df_out.limit(1).count()  # wymusza ewaluację — tu wyskoczy błąd jeśli ST_Y niedostępne
         except Exception:
             # Fallback: geometry jako string "POINT(lon lat)"
             df_out = df_with_cat \
