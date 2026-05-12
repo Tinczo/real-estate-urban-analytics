@@ -5,7 +5,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PBF_PATH="${1:-$SCRIPT_DIR/../data/planet_20.762,52.139_21.267,52.334.osm.pbf}"
+PBF_PATH="${1:-$SCRIPT_DIR/../data/warsaw.osm.pbf}"
 PORT="${2:-8083}"
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'

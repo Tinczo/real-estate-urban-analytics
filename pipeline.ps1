@@ -32,6 +32,7 @@ step "PIPELINE START ($(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'))"
 if (-not $SkipInfrastructure) {
     step "1/5 Infrastruktura: Hadoop/Spark + Nominatim"
     info "Uruchamiam klaster Hadoop/Spark..."
+    
     & "$ROOT\infrastructure\setup_hadoop.ps1" -DataDir $DATA
     check
 

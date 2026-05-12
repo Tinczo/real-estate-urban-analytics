@@ -3,7 +3,7 @@
 # Przyklad: .\setup_nominatim.ps1
 
 param(
-    [string]$PbfPath = "$PSScriptRoot\..\data\planet_20.762,52.139_21.267,52.334.osm.pbf",
+    [string]$PbfPath = "$PSScriptRoot\..\data\warsaw.osm.pbf",
     [int]$Port = 8083
 )
 
