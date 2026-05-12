@@ -157,19 +157,22 @@ run_e1_2() {
 }
 
 run_e1_3() {
-  info "==> Geocoding nieruchomosci (Nominatim)..."
-  python3 "$PROJECT_DIR/scripts/processing/geocode_real_estate.py" \
-    "$DATA/real_estate_merged" \
-    "$DATA/real_estate_geocoded"
+  if docker exec "$CONTAINER" bash -c "hdfs dfs -test -d $HDFS_RE_GEOCODED" 2>/dev/null; then
+    info "==> Dane geocodowane juz sa na HDFS ($HDFS_RE_GEOCODED) - pomijam geocoding i upload."
+  else
+    info "==> Geocoding nieruchomosci (Nominatim)..."
+    python3 "$PROJECT_DIR/scripts/processing/geocode_real_estate.py" \
+      "$DATA/real_estate_merged" \
+      "$DATA/real_estate_geocoded"
 
-  info "==> Upload danych geocodowanych do HDFS..."
-  docker exec "$CONTAINER" bash -c "hdfs dfs -rm -r -skipTrash $HDFS_RE_GEOCODED 2>/dev/null || true"
-  find "$DATA/real_estate_geocoded" -type f | while read -r f; do
-    rel="${f#$DATA/real_estate_geocoded/}"
-    cat "$f" | docker exec -i "$CONTAINER" \
-      hdfs dfs -D dfs.replication=1 -put - "$HDFS_RE_GEOCODED/$rel"
-  done
-  docker exec "$CONTAINER" bash -c "hdfs dfs -setrep -R 3 $HDFS_RE_GEOCODED" || true
+    info "==> Upload danych geocodowanych do HDFS..."
+    find "$DATA/real_estate_geocoded" -type f | while read -r f; do
+      rel="${f#$DATA/real_estate_geocoded/}"
+      cat "$f" | docker exec -i "$CONTAINER" \
+        hdfs dfs -D dfs.replication=1 -put - "$HDFS_RE_GEOCODED/$rel"
+    done
+    docker exec "$CONTAINER" bash -c "hdfs dfs -setrep -R 3 $HDFS_RE_GEOCODED" || true
+  fi
 
   hdfs_rm "$HDFS_T1_3"
   docker exec "$CONTAINER" bash -c "
