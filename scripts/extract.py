@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 """
-Wyciąga ujednolicone kolumny z heterogenicznych CSV nieruchomości.
-Obsługuje trzy schematy dane.gov.pl:
-  - Format A (stary, 27 kol., sep=,): adres jako jeden string w "Lokalizacja..."
-  - Format B (nowy, 40+ kol., sep=,): adres jako osobne kolumny, cena brutto/m2
-  - Format C (nowy, 25+ kol., sep=;): jak B ale średnikowy, "Powierzchni lokalu" (literówka)
+Wyciąga ujednolicone kolumny z heterogenicznych CSV nieruchomości z dane.gov.pl.
+Wszystkie pliki mają osobne kolumny adresowe — różnią się tylko separatorem i nazwą
+kolumny z ceną m2.
+
 Wyjście: CSV z separatorem ";" i kolumnami:
   Nazwa dewelopera;Miejscowość;Ulica;Nr;Kod pocztowy;Cena m2;Cena całkowita;Powierzchnia
 """
 
 import sys
 import csv
-import re
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
@@ -27,34 +25,32 @@ OUTPUT_COLS = [
     "Powierzchnia",
 ]
 
-# Kolumna lokalizacji w formacie A
-FORMAT_A_LOCATION_COL = "Lokalizacja przedsięwzięcia deweloperskiego lub zadania inwestycyjnego"
+# Kolumny adresowe — stałe we wszystkich wariantach schematu
+COL_CITY    = "Miejscowość lokalizacji przedsięwzięcia deweloperskiego lub zadania inwestycyjnego"
+COL_STREET  = "Ulica lokalizacji przedsięwzięcia deweloperskiego lub zadania inwestycyjnego"
+COL_NR      = "Nr nieruchomości lokalizacji przedsięwzięcia deweloperskiego lub zadania inwestycyjnego"
+COL_ZIP     = "Kod pocztowy lokalizacji przedsięwzięcia deweloperskiego lub zadania inwestycyjnego"
 
-# Sygnały rozpoznania formatu — wystarczy że jedna z tych kolumn istnieje
-FORMAT_A_SIGNAL = "Cena m 2 powierzchni użytkowej lokalu mieszkalnego / domu jednorodzinnego [zł]"
-FORMAT_BC_SIGNAL = "Cena brutto/m2 powierzchni produktu [zł]"
+# Możliwe nazwy kolumny ceny m2 (różne wersje API)
+PRICE_M2_CANDIDATES = [
+    "Cena m 2 powierzchni użytkowej lokalu mieszkalnego / domu jednorodzinnego [zł]",
+    "Cena m² powierzchni użytkowej lokalu mieszkalnego / domu jednorodzinnego [zł]",
+    "Cena brutto/m2 powierzchni produktu [zł]",
+]
 
-# Mapowania kolumn dla każdego formatu (None = brak kolumny, zostanie "")
-FORMAT_A_MAP = {
-    "Nazwa dewelopera": "Nazwa dewelopera",
-    "Cena m2":          "Cena m 2 powierzchni użytkowej lokalu mieszkalnego / domu jednorodzinnego [zł]",
-    "Cena całkowita":   "Cena lokalu mieszkalnego lub domu jednorodzinnego  stanowiąca iloczym ceny m2 oraz powierzchni",
-    "Powierzchnia":     None,
-}
+# Możliwe nazwy kolumny ceny całkowitej
+PRICE_TOT_CANDIDATES = [
+    "Cena lokalu mieszkalnego lub domu jednorodzinnego będących przedmiotem umowy stanowiąca iloczyn ceny m2 oraz powierzchni [zł]",
+    "Cena lokalu mieszkalnego lub domu jednorodzinnego będących przedmiotem umowy stanowiąca iloczyn ceny m 2 oraz powierzchni [zł]",
+    "Cena lokalu mieszkalnego lub domu jednorodzinnego  stanowiąca iloczym ceny m2 oraz powierzchni",
+    "Cena brutto produktu [zł]",
+]
 
-FORMAT_BC_MAP = {
-    "Nazwa dewelopera": "Nazwa dewelopera",
-    "Miejscowość":      "Miejscowość lokalizacji przedsięwzięcia deweloperskiego lub zadania inwestycyjnego",
-    "Ulica":            "Ulica lokalizacji przedsięwzięcia deweloperskiego lub zadania inwestycyjnego",
-    "Nr":               "Nr nieruchomości lokalizacji przedsięwzięcia deweloperskiego lub zadania inwestycyjnego",
-    "Kod pocztowy":     "Kod pocztowy lokalizacji przedsięwzięcia deweloperskiego lub zadania inwestycyjnego",
-    "Cena m2":          "Cena brutto/m2 powierzchni produktu [zł]",
-    "Cena całkowita":   "Cena brutto produktu [zł]",
-    # Powierzchnia: dwie możliwe nazwy (z literówką i bez)
-}
-FORMAT_BC_AREA_COLS = ["Powierzchnia lokalu [m2]", "Powierzchni lokalu [m2]"]
-
-RE_ZIPCODE = re.compile(r"\b(\d{2}-\d{3})\b")
+# Możliwe nazwy kolumny powierzchni
+AREA_CANDIDATES = [
+    "Powierzchnia lokalu [m2]",
+    "Powierzchni lokalu [m2]",
+]
 
 
 def detect_encoding(filepath):
@@ -68,28 +64,11 @@ def detect_encoding(filepath):
     return 'utf-8'
 
 
-def parse_location_a(location_str: str) -> dict:
-    s = location_str.strip()
-    result = {"Ulica": "", "Nr": "", "Kod pocztowy": "", "Miejscowość": ""}
-
-    zip_match = RE_ZIPCODE.search(s)
-    if zip_match:
-        result["Kod pocztowy"] = zip_match.group(1)
-        after_zip = s[zip_match.end():].strip().lstrip(",").strip()
-        result["Miejscowość"] = after_zip.split(",")[0].strip()
-
-    parts = s.split(",")
-    street_raw = parts[0].strip()
-    street_raw = re.sub(r"^(ul\.|al\.|os\.|pl\.|aleja|ulica)\s*", "", street_raw, flags=re.IGNORECASE)
-
-    num_match = re.search(r"\s+(\d+[a-zA-Z]?(/\d+)?)$", street_raw)
-    if num_match:
-        result["Nr"] = num_match.group(1)
-        result["Ulica"] = street_raw[:num_match.start()].strip()
-    else:
-        result["Ulica"] = street_raw
-
-    return result
+def find_col(fset, candidates):
+    for c in candidates:
+        if c in fset:
+            return c
+    return None
 
 
 def extract_file(csv_path, output_path, write_header=True):
@@ -108,20 +87,13 @@ def extract_file(csv_path, output_path, write_header=True):
             reader.fieldnames = fieldnames
             fset = set(fieldnames)
 
-            if FORMAT_A_SIGNAL in fset:
-                fmt = 'A'
-            elif FORMAT_BC_SIGNAL in fset:
-                fmt = 'BC'
-            else:
-                return False, f"nieznany schemat ({len(fieldnames)} kol, sep='{sep}')"
+            # Wymagane: przynajmniej jedna kolumna z ceną m2
+            price_m2_col  = find_col(fset, PRICE_M2_CANDIDATES)
+            if not price_m2_col:
+                return False, f"brak kolumny ceny m2 ({len(fieldnames)} kol)"
 
-            # Znajdź kolumnę powierzchni dla BC (obsługa literówki)
-            area_col = None
-            if fmt == 'BC':
-                for candidate in FORMAT_BC_AREA_COLS:
-                    if candidate in fset:
-                        area_col = candidate
-                        break
+            price_tot_col = find_col(fset, PRICE_TOT_CANDIDATES)
+            area_col      = find_col(fset, AREA_CANDIDATES)
 
             rows_written = 0
             with open(output_path, 'a', encoding='utf-8', newline='') as out:
@@ -130,25 +102,22 @@ def extract_file(csv_path, output_path, write_header=True):
                     writer.writeheader()
 
                 for row in reader:
-                    if fmt == 'A':
-                        loc = parse_location_a(row.get(FORMAT_A_LOCATION_COL, ""))
-                        out_row = {
-                            "Nazwa dewelopera": row.get("Nazwa dewelopera", "").strip(),
-                            "Miejscowość":      loc["Miejscowość"],
-                            "Ulica":            loc["Ulica"],
-                            "Nr":               loc["Nr"],
-                            "Kod pocztowy":     loc["Kod pocztowy"],
-                            "Cena m2":          row.get(FORMAT_A_MAP["Cena m2"], "").strip(),
-                            "Cena całkowita":   row.get(FORMAT_A_MAP["Cena całkowita"], "").strip(),
-                            "Powierzchnia":     "",
-                        }
-                    else:
-                        out_row = {out: row.get(src, "").strip() for out, src in FORMAT_BC_MAP.items()}
-                        out_row["Powierzchnia"] = row.get(area_col, "").strip() if area_col else ""
+                    cena_m2  = row.get(price_m2_col, "").strip()
+                    cena_tot = row.get(price_tot_col, "").strip() if price_tot_col else ""
 
-                    if not out_row["Cena m2"] and not out_row["Cena całkowita"]:
+                    if not cena_m2 and not cena_tot:
                         continue
 
+                    out_row = {
+                        "Nazwa dewelopera": row.get("Nazwa dewelopera", "").strip(),
+                        "Miejscowość":      row.get(COL_CITY,   "").strip(),
+                        "Ulica":            row.get(COL_STREET, "").strip(),
+                        "Nr":               row.get(COL_NR,     "").strip(),
+                        "Kod pocztowy":     row.get(COL_ZIP,    "").strip(),
+                        "Cena m2":          cena_m2,
+                        "Cena całkowita":   cena_tot,
+                        "Powierzchnia":     row.get(area_col, "").strip() if area_col else "",
+                    }
                     writer.writerow(out_row)
                     rows_written += 1
 
