@@ -19,8 +19,8 @@ for node in master slave1 slave2 slave3; do
 done
 if [ $flag = "restart" ]
 then
-  docker exec -it master bash -c "/sh/restart-all.sh"
+  docker exec master bash -c "/sh/restart-all.sh"
 elif [ $flag = "start" ]
 then
-  docker exec -it master bash -c "/sh/start-all.sh"
+  docker exec master bash -c "/sh/start-all.sh"
 fi

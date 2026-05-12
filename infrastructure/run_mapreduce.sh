@@ -65,6 +65,10 @@ HDFS_REPORT=$(docker exec "$CONTAINER" hdfs dfsadmin -report 2>&1 || true)
 echo "$HDFS_REPORT" | grep -q "Live datanodes" \
   || error "HDFS nie dziala. Sprawdz: docker logs master"
 
+YARN_REPORT=$(docker exec "$CONTAINER" yarn node -list 2>&1 || true)
+echo "$YARN_REPORT" | grep -q "RUNNING" \
+  || error "YARN (ResourceManager) nie dziala. Sprobuj zrestartowac klaster."
+
 docker exec "$CONTAINER" bash -c "test -f $JAR_HDFS_PATH" 2>/dev/null || {
   info "JAR nie znaleziony na masterze - szukam w target/..."
   JAR_LOCAL=$(find "$PROJECT_DIR/mapreduce/target" "$PROJECT_DIR/target" -maxdepth 1 \
