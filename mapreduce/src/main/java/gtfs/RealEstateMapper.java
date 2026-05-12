@@ -109,7 +109,7 @@ public class RealEstateMapper extends Mapper<LongWritable, Text, Text, RealEstat
         for (char c : line.toCharArray()) {
             if (c == '"') {
                 inQuotes = !inQuotes;
-            } else if (c == ',' && !inQuotes) {
+            } else if (c == ';' && !inQuotes) {
                 result.add(current.toString());
                 current.setLength(0);
             } else {

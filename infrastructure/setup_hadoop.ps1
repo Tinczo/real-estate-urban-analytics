@@ -21,17 +21,18 @@ New-Item -ItemType Directory -Force -Path $WORKSPACE_DIR | Out-Null
 
 Set-Location $COMPOSE_DIR
 
-info "Zatrzymuje stare kontenery..."
-docker compose down --remove-orphans
+$masterRunning = docker ps --format '{{.Names}}' 2>$null | Where-Object { $_ -eq "master" }
+if ($masterRunning) {
+    info "Klaster juz dziala - pomijam uruchamianie."
+} else {
+    info "Uruchamiam klaster (Hadoop 3.3.5 + Spark 3.4.0, 3 slavey)..."
+    $wsUnix = $WORKSPACE_DIR -replace '^([A-Za-z]):\\', '/$1/' -replace '\\', '/'
+    bash compose-up.sh 3.3.5 3.4.0 3 $wsUnix "$wsUnix/hadoop_data" "$wsUnix/hadoop_logs" "$wsUnix/spark_logs" 2>&1 | Out-Null
 
-info "Uruchamiam klaster (Hadoop 3.3.5 + Spark 3.4.0, 3 slavey)..."
-# Docker Desktop na Windowsie wymaga sciezki w formacie /d/folder (Git Bash style)
-$wsUnix = $WORKSPACE_DIR -replace '^([A-Za-z]):\\', '/$1/' -replace '\\', '/'
-bash compose-up.sh 3.3.5 3.4.0 3 $wsUnix "$wsUnix/hadoop_data" "$wsUnix/hadoop_logs" "$wsUnix/spark_logs" 2>&1 | Where-Object { $_ -match '^\[|^Done|^Start|^Successfully|Running|Created|Started|Removed|Error' }
-
-if ($LASTEXITCODE -ne 0) {
-    err "compose-up.sh zakonczyl sie bledem. Sprawdz logi Docker."
-    exit 1
+    if ($LASTEXITCODE -ne 0) {
+        err "compose-up.sh zakonczyl sie bledem. Sprawdz logi Docker."
+        exit 1
+    }
 }
 
 info "Czekam na gotowos HDFS..."
@@ -49,7 +50,7 @@ while ($true) {
 }
 
 info "Czekam na wyjscie z trybu safe mode..."
-docker exec $CONTAINER hdfs dfsadmin -safemode wait
+docker exec $CONTAINER hdfs dfsadmin -safemode wait 2>&1 | Out-Null
 
 info "HDFS gotowy. Uploaduje dane..."
 
@@ -61,20 +62,19 @@ foreach ($dataset in $DATASETS) {
         continue
     }
 
-    info "Uploaduje: $dataset"
     $files = Get-ChildItem $localDir -Recurse -File
+    info "Uploaduje: $dataset ($($files.Count) plikow)..."
 
     foreach ($file in $files) {
         $relativePath = $file.FullName.Substring($DataDir.Length).Replace('\', '/')
         $hdfsPath = $relativePath
         $hdfsDir  = ($hdfsPath -replace '/[^/]+$', '')
 
-        docker exec $CONTAINER hdfs dfs -mkdir -p $hdfsDir | Out-Null
+        docker exec $CONTAINER hdfs dfs -mkdir -p $hdfsDir 2>&1 | Out-Null
         Get-Content $file.FullName -AsByteStream -Raw |
-            docker exec -i $CONTAINER hdfs dfs -D dfs.replication=1 -put - $hdfsPath
-
-        Write-Host "  Przeslano: $relativePath" -ForegroundColor Yellow
+            docker exec -i $CONTAINER hdfs dfs -D dfs.replication=1 -put - $hdfsPath 2>&1 | Out-Null
     }
+    info "  $dataset - gotowe."
 }
 
 info "Ustawiam wspolczynnik replikacji na 3..."
@@ -84,7 +84,7 @@ foreach ($dataset in $DATASETS) {
     if ($LASTEXITCODE -eq 0) { $existingDirs += "/$dataset" }
 }
 if ($existingDirs.Count -gt 0) {
-    docker exec $CONTAINER hdfs dfs -setrep -R 3 ($existingDirs -join " ")
+    docker exec $CONTAINER hdfs dfs -setrep -R 3 ($existingDirs -join " ") 2>&1 | Out-Null
 }
 
 info "Gotowe! Klaster dziala."

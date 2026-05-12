@@ -39,6 +39,7 @@ public class GtfsE15 {
         job15.setOutputValueClass(StopInfo.class);
 
         job15.setInputFormatClass(SequenceFileInputFormat.class);
+        job15.setOutputFormatClass(SequenceFileOutputFormat.class);
         FileInputFormat.addInputPath(job15, new Path(args[0]));
         FileOutputFormat.setOutputPath(job15, new Path(args[1]));
 

@@ -13,8 +13,8 @@ from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import StringType, DoubleType
 
-HDFS_INPUT  = "hdfs://master:9000/user/hadoop/data/osm/"
-HDFS_OUTPUT = "hdfs://master:9000/user/hadoop/data/osm_csv/"
+HDFS_INPUT  = "hdfs://master:9000/osm/parquet/"
+HDFS_OUTPUT = "hdfs://master:9000/osm_csv/"
 
 # Wagi obiektów wg typu — wartości zgodne z raportem 4
 ROAD_WEIGHTS = {

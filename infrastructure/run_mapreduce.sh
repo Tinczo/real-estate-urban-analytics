@@ -51,14 +51,15 @@ hdfs_rm() { docker exec "$CONTAINER" bash -c "hdfs dfs -rm -r -skipTrash $1 2>/d
 docker ps --format '{{.Names}}' | grep -q "^${CONTAINER}$" \
   || error "Kontener '$CONTAINER' nie dziala. Uruchom klaster przez start.sh"
 
-docker exec "$CONTAINER" hdfs dfsadmin -report 2>/dev/null | grep -q "Live datanodes" \
+HDFS_REPORT=$(docker exec "$CONTAINER" hdfs dfsadmin -report 2>&1 || true)
+echo "$HDFS_REPORT" | grep -q "Live datanodes" \
   || error "HDFS nie dziala. Sprawdz: docker logs master"
 
 docker exec "$CONTAINER" bash -c "test -f $JAR_HDFS_PATH" 2>/dev/null || {
-  info "JAR nie znaleziony na masterze - kopiuje z target/..."
-  JAR_LOCAL=$(find "$PROJECT_DIR/target" -maxdepth 1 -name "mapreduce-*-SNAPSHOT.jar" \
-              ! -name "original-*" | head -1)
-  [ -n "$JAR_LOCAL" ] || error "Brak JAR w $PROJECT_DIR/target/. Uruchom: cd mapreduce && mvn clean package -DskipTests"
+  info "JAR nie znaleziony na masterze - szukam w target/..."
+  JAR_LOCAL=$(find "$PROJECT_DIR/mapreduce/target" "$PROJECT_DIR/target" -maxdepth 1 \
+              -name "mapreduce-*-SNAPSHOT.jar" ! -name "original-*" 2>/dev/null | head -1)
+  [ -n "$JAR_LOCAL" ] || error "Brak JAR w $PROJECT_DIR/mapreduce/target/. Uruchom najpierw: cd mapreduce && mvn clean package -DskipTests"
   docker exec "$CONTAINER" mkdir -p /data/hadoop
   docker cp "$JAR_LOCAL" "$CONTAINER:$JAR_HDFS_PATH"
   info "JAR skopiowany: $JAR_HDFS_PATH"
@@ -140,7 +141,7 @@ run_e1_2() {
   info "==> Konwersja OSM Parquet -> CSV (PySpark)..."
   docker cp "$PROJECT_DIR/scripts/processing/osm_to_csv.py" spark:/tmp/osm_to_csv.py
   docker exec spark bash -c "
-    /spark/bin/spark-submit \
+    /usr/local/spark-3.4.0-bin-hadoop3/bin/spark-submit \
       --master yarn \
       --deploy-mode client \
       /tmp/osm_to_csv.py
