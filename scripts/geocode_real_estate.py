@@ -17,7 +17,7 @@ from urllib.parse import quote
 from urllib.request import urlopen, Request
 from urllib.error import URLError
 
-NOMINATIM_URL = "http://localhost:8080/search"
+NOMINATIM_URL = "http://localhost:8083/search"
 MAX_WORKERS = 20
 RETRY_DELAY = 1.0  # sekund między próbami przy błędzie
 MAX_RETRIES = 3
@@ -129,19 +129,25 @@ def process_file(input_path: str, output_path: str) -> int:
     fieldnames = [COL_NAME, COL_CITY, COL_STREET, COL_NUMBER, COL_ZIP,
                   COL_PRICE_M2, COL_PRICE_TOT, COL_AREA, "lat", "lon"]
 
-    written = 0
-    with open(output_path, "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
-        writer.writeheader()
-        for row, (lat, lon) in zip(rows_in, results):
-            if lat is None:
-                continue  # Pomiń rekordy bez współrzędnych
-            row["lat"] = lat
-            row["lon"] = lon
-            writer.writerow(row)
-            written += 1
+    output_rows = []
+    for row, (lat, lon) in zip(rows_in, results):
+        if lat is None:
+            continue
+        row["lat"] = lat
+        row["lon"] = lon
+        output_rows.append(row)
 
-    return written
+    if not output_rows:
+        return 0
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter=";", extrasaction="ignore")
+        writer.writeheader()
+        for row in output_rows:
+            writer.writerow(row)
+
+    return len(output_rows)
 
 
 def main():
