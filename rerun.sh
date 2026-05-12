@@ -1,2 +1,2 @@
 #!/bin/bash
-./pipeline.sh --skip-infrastructure --skip-acquisition --skip-processing
+./pipeline.sh --skip-infrastructure --skip-acquisition --skip-processing "$@"

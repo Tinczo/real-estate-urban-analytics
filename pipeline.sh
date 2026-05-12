@@ -71,6 +71,52 @@ fi
 
 if [ $SKIP_MAPREDUCE -eq 0 ]; then
     step "4/5 MapReduce pipeline (E1.1 -> E1.5 -> E1.2 -> E1.3 -> E2 -> E3)"
+
+    # Upload brakujacych danych na HDFS
+    for hdfsDir in "gtfs" "osm" "real_estate_geocoded"; do
+        localDir="$DATA/$hdfsDir"
+        if [ ! -d "$localDir" ]; then continue; fi
+        
+        if ! docker exec master hdfs dfs -test -d "/$hdfsDir" >/dev/null 2>&1; then
+            files=()
+            while IFS=  read -r -d $'\0'; do
+                files+=("$REPLY")
+            done < <(find "$localDir" -type f -print0)
+            
+            totalMB=$(du -sm "$localDir" 2>/dev/null | awk '{print $1}' || echo 0)
+            info "Uploaduje: $hdfsDir (${#files[@]} plikow, ~${totalMB} MB)..."
+            
+            i=0
+            for file in "${files[@]}"; do
+                i=$((i+1))
+                rel="${file#$DATA/}"
+                hdfsDir2="/$(dirname "$rel")"
+                if [ "$hdfsDir2" = "/." ]; then hdfsDir2="/"; fi
+                sizeMB=$(du -sm "$file" 2>/dev/null | awk '{print $1}' || echo 0)
+                echo -e "\033[1;30m  [$i/${#files[@]}] $(basename "$file") (~${sizeMB} MB)\033[0m"
+                docker exec master hdfs dfs -mkdir -p "$hdfsDir2" >/dev/null 2>&1 || true
+                docker cp "$file" "master:/tmp/_upload_tmp" >/dev/null 2>&1 || true
+                docker exec master hdfs dfs -D dfs.replication=1 -put -f /tmp/_upload_tmp "/$rel" >/dev/null 2>&1 || true
+            done
+            docker exec master hdfs dfs -setrep -R 3 "/$hdfsDir" >/dev/null 2>&1 || true
+            info "  $hdfsDir - gotowe."
+        else
+            info "  $hdfsDir - juz na HDFS, pomijam."
+        fi
+    done
+
+    # JAR
+    JAR=$(find "$ROOT/mapreduce/target" -maxdepth 1 -name "mapreduce-*-SNAPSHOT.jar" ! -name "original-*" 2>/dev/null | head -n 1 || true)
+    if [ -z "$JAR" ]; then
+        info "Buduje JAR (mvn clean package)..."
+        mvn -f "$ROOT/mapreduce/pom.xml" clean package -DskipTests -q
+        JAR=$(find "$ROOT/mapreduce/target" -maxdepth 1 -name "mapreduce-*-SNAPSHOT.jar" ! -name "original-*" 2>/dev/null | head -n 1 || true)
+    fi
+    if [ -n "$JAR" ]; then
+        docker cp "$JAR" "master:/data/hadoop/mapreduce-1.0-SNAPSHOT.jar" >/dev/null 2>&1 || true
+        info "JAR skopiowany na mastera."
+    fi
+
     bash "$ROOT/infrastructure/run_mapreduce.sh" "$ROOT" "$DATA" all
 else
     warn "4/5 Pomijam MapReduce (--skip-mapreduce)"
