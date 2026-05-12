@@ -46,6 +46,15 @@ run_timed() {
 
 hdfs_rm() { docker exec "$CONTAINER" bash -c "hdfs dfs -rm -r -skipTrash $1 2>/dev/null || true"; }
 
+# Uruchamia yarn jar i ignoruje blad Job History Server (Unknown Job).
+# Weryfikuje sukces przez obecnosc katalogu wyjsciowego na HDFS.
+yarn_job() {
+  local output_dir="$1"; shift
+  docker exec "$CONTAINER" bash -c "yarn jar $*" 2>&1 || true
+  docker exec "$CONTAINER" bash -c "hdfs dfs -test -d $output_dir" \
+    || error "Job zakonczyl sie bledem - brak katalogu wyjsciowego: $output_dir"
+}
+
 # ── Weryfikacja srodowiska ────────────────────────────────────────────────────
 
 docker ps --format '{{.Names}}' | grep -q "^${CONTAINER}$" \
@@ -72,13 +81,8 @@ run_e1_1() {
     || error "Brak danych GTFS na HDFS ($HDFS_GTFS/stop_times.txt). Uruchom start.sh"
 
   hdfs_rm "$HDFS_T1_1"
-  docker exec "$CONTAINER" bash -c "
-    set -e
-    yarn jar $JAR_HDFS_PATH gtfs.GtfsE11 \
-      $HDFS_GTFS/stop_times.txt \
-      $HDFS_GTFS \
-      $HDFS_T1_1
-  "
+  yarn_job "$HDFS_T1_1" $JAR_HDFS_PATH gtfs.GtfsE11 \
+    $HDFS_GTFS/stop_times.txt $HDFS_GTFS $HDFS_T1_1
 }
 
 run_e1_5() {
@@ -86,12 +90,7 @@ run_e1_5() {
     || { info "Brak t1_1 - uruchamiam E1.1 najpierw..."; run_timed "E1.1" run_e1_1; }
 
   hdfs_rm "$HDFS_T1_5"
-  docker exec "$CONTAINER" bash -c "
-    set -e
-    yarn jar $JAR_HDFS_PATH gtfs.GtfsE15 \
-      $HDFS_T1_1 \
-      $HDFS_T1_5
-  "
+  yarn_job "$HDFS_T1_5" $JAR_HDFS_PATH gtfs.GtfsE15 $HDFS_T1_1 $HDFS_T1_5
 }
 
 run_exp_combiner() {
@@ -101,18 +100,12 @@ run_exp_combiner() {
     || { info "Brak t1_1 - uruchamiam E1.1 najpierw..."; run_timed "E1.1" run_e1_1; }
 
   hdfs_rm "${HDFS_T1_5}_exp_comb_off"
-  run_timed "E1.5_combiner_OFF" docker exec "$CONTAINER" bash -c "
-    set -e
-    yarn jar $JAR_HDFS_PATH gtfs.GtfsE15 \
-      $HDFS_T1_1 ${HDFS_T1_5}_exp_comb_off 1 false
-  "
+  run_timed "E1.5_combiner_OFF" yarn_job "${HDFS_T1_5}_exp_comb_off" \
+    $JAR_HDFS_PATH gtfs.GtfsE15 $HDFS_T1_1 ${HDFS_T1_5}_exp_comb_off 1 false
 
   hdfs_rm "${HDFS_T1_5}_exp_comb_on"
-  run_timed "E1.5_combiner_ON" docker exec "$CONTAINER" bash -c "
-    set -e
-    yarn jar $JAR_HDFS_PATH gtfs.GtfsE15 \
-      $HDFS_T1_1 ${HDFS_T1_5}_exp_comb_on 1 true
-  "
+  run_timed "E1.5_combiner_ON" yarn_job "${HDFS_T1_5}_exp_comb_on" \
+    $JAR_HDFS_PATH gtfs.GtfsE15 $HDFS_T1_1 ${HDFS_T1_5}_exp_comb_on 1 true
 
   info "=== PODSUMOWANIE eksperymentu B ==="
   grep "TIMING.*combiner" "$LOG_FILE" || true
@@ -126,11 +119,8 @@ run_exp_reducers() {
 
   for N in 1 2 3; do
     hdfs_rm "${HDFS_T1_5}_exp_r${N}"
-    run_timed "E1.5_reducers_${N}" docker exec "$CONTAINER" bash -c "
-      set -e
-      yarn jar $JAR_HDFS_PATH gtfs.GtfsE15 \
-        $HDFS_T1_1 ${HDFS_T1_5}_exp_r${N} ${N} false
-    "
+    run_timed "E1.5_reducers_${N}" yarn_job "${HDFS_T1_5}_exp_r${N}" \
+      $JAR_HDFS_PATH gtfs.GtfsE15 $HDFS_T1_1 ${HDFS_T1_5}_exp_r${N} ${N} false
   done
 
   info "=== PODSUMOWANIE eksperymentu C ==="
@@ -148,12 +138,7 @@ run_e1_2() {
   "
 
   hdfs_rm "$HDFS_T1_2"
-  docker exec "$CONTAINER" bash -c "
-    set -e
-    yarn jar $JAR_HDFS_PATH gtfs.OsmE12 \
-      $HDFS_OSM_CSV \
-      $HDFS_T1_2
-  "
+  yarn_job "$HDFS_T1_2" $JAR_HDFS_PATH gtfs.OsmE12 $HDFS_OSM_CSV $HDFS_T1_2
 }
 
 run_e1_3() {
@@ -175,12 +160,7 @@ run_e1_3() {
   fi
 
   hdfs_rm "$HDFS_T1_3"
-  docker exec "$CONTAINER" bash -c "
-    set -e
-    yarn jar $JAR_HDFS_PATH gtfs.RealEstateE13 \
-      $HDFS_RE_GEOCODED \
-      $HDFS_T1_3
-  "
+  yarn_job "$HDFS_T1_3" $JAR_HDFS_PATH gtfs.RealEstateE13 $HDFS_RE_GEOCODED $HDFS_T1_3
 }
 
 run_e2() {
@@ -192,11 +172,7 @@ run_e2() {
     || error "Brak t1_3. Uruchom e1_3 najpierw."
 
   hdfs_rm "$HDFS_T2"
-  docker exec "$CONTAINER" bash -c "
-    set -e
-    yarn jar $JAR_HDFS_PATH gtfs.E2Driver \
-      $HDFS_T1_5 $HDFS_T1_2 $HDFS_T1_3 $HDFS_T2
-  "
+  yarn_job "$HDFS_T2" $JAR_HDFS_PATH gtfs.E2Driver $HDFS_T1_5 $HDFS_T1_2 $HDFS_T1_3 $HDFS_T2
 }
 
 run_e3() {
@@ -204,11 +180,7 @@ run_e3() {
     || error "Brak t2. Uruchom e2 najpierw."
 
   hdfs_rm "$HDFS_T3"
-  docker exec "$CONTAINER" bash -c "
-    set -e
-    yarn jar $JAR_HDFS_PATH gtfs.E3Driver \
-      $HDFS_T2 $HDFS_T3
-  "
+  yarn_job "$HDFS_T3" $JAR_HDFS_PATH gtfs.E3Driver $HDFS_T2 $HDFS_T3
 }
 
 # ── Dispatch ──────────────────────────────────────────────────────────────────
