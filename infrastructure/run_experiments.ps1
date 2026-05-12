@@ -1,13 +1,13 @@
 # run_experiments.ps1 - Eksperymenty MapReduce na klastrze Hadoop
 # Uzycie: .\run_experiments.ps1 [-Job <flaga>] [-JarPath <sciezka>]
 # Flagi: e1_1, e1_5, exp_combiner, exp_reducers, all
-# Przyklad: .\run_experiments.ps1 -Job exp_combiner
+# Przyklad: .\run_experiments.ps1
 
 param(
     [string]$Job = "all",
-    [string]$JarPath = "C:\Studia\SEM III\Wolf\Projekt\duze-dane\mapreduce\target\mapreduce-1.0-SNAPSHOT.jar",
+    [string]$JarPath = "$PSScriptRoot\..\mapreduce\target\mapreduce-1.0-SNAPSHOT.jar",
     [string]$Container = "master",
-    [string]$LogDir = "C:\Studia\SEM III\Wolf\Projekt\duze-dane\data\logs"
+    [string]$LogDir = "$PSScriptRoot\..\data\logs"
 )
 
 $JAR_HDFS    = "/data/hadoop/mapreduce-1.0-SNAPSHOT.jar"
@@ -220,11 +220,11 @@ separator
 info "Weryfikacja srodowiska..."
 
 $hdfsOk = docker exec $Container hdfs dfsadmin -report 2>&1 | Select-String "Live datanodes"
-if (-not $hdfsOk) { err "HDFS nie dziala! Uruchom klaster przez start.ps1"; exit 1 }
+if (-not $hdfsOk) { err "HDFS nie dziala! Uruchom klaster przez setup_hadoop.ps1"; exit 1 }
 ok "HDFS dziala"
 
 $gtfsOk = docker exec $Container bash -c "hdfs dfs -test -e /gtfs/stop_times.txt && echo ok" 2>&1
-if ($gtfsOk -notmatch "ok") { err "Brak /gtfs/stop_times.txt na HDFS! Uruchom start.ps1"; exit 1 }
+if ($gtfsOk -notmatch "ok") { err "Brak /gtfs/stop_times.txt na HDFS! Uruchom setup_hadoop.ps1"; exit 1 }
 ok "Dane GTFS na HDFS"
 
 $jarOk = docker exec $Container bash -c "test -f $JAR_HDFS && echo ok" 2>&1

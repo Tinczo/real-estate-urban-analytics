@@ -1,19 +1,14 @@
 #!/bin/bash
 # run_mapreduce.sh - uruchamia joby MapReduce na klastrze Hadoop
-# Uzycie: ./run_mapreduce.sh <sciezka_do_projektu> <sciezka_do_danych> <job_flag>
+# Uzycie: ./run_mapreduce.sh [sciezka_do_projektu] [sciezka_do_danych] [job_flag]
 # Flagi: e1_1, e1_5, e1_2, e1_3, e2, e3, exp_combiner, exp_reducers, all
-# Przyklad: ./run_mapreduce.sh . ~/data exp_combiner
+# Przyklad: ./run_mapreduce.sh
 set -euo pipefail
 
-if [ $# -lt 3 ]; then
-  echo "Uzycie: $0 <sciezka_do_projektu> <sciezka_do_danych> <job_flag>"
-  echo "Flagi: e1_1, e1_5, e1_2, e1_3, e2, e3, exp_combiner, exp_reducers, all"
-  exit 1
-fi
-
-PROJECT_DIR="$(realpath "$1")"
-DATA="$(realpath "$2")"
-JOB_FLAG="$3"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(realpath "${1:-$SCRIPT_DIR/..}")"
+DATA="$(realpath "${2:-$PROJECT_DIR/data}")"
+JOB_FLAG="${3:-all}"
 CONTAINER="master"
 
 # Sciezka JAR na masterze (tam gdzie start.sh/start.ps1 go kopiuje)
@@ -143,7 +138,7 @@ run_exp_reducers() {
 
 run_e1_2() {
   info "==> Konwersja OSM Parquet -> CSV (PySpark)..."
-  docker cp "$PROJECT_DIR/scripts/osm_to_csv.py" spark:/tmp/osm_to_csv.py
+  docker cp "$PROJECT_DIR/scripts/processing/osm_to_csv.py" spark:/tmp/osm_to_csv.py
   docker exec spark bash -c "
     /spark/bin/spark-submit \
       --master yarn \
@@ -162,7 +157,7 @@ run_e1_2() {
 
 run_e1_3() {
   info "==> Geocoding nieruchomosci (Nominatim)..."
-  python3 "$PROJECT_DIR/scripts/geocode_real_estate.py" \
+  python3 "$PROJECT_DIR/scripts/processing/geocode_real_estate.py" \
     "$DATA/real_estate_merged" \
     "$DATA/real_estate_geocoded"
 

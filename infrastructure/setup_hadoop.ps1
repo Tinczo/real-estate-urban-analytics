@@ -1,22 +1,21 @@
-# start.ps1 - odpowiednik start.sh dla Windows/PowerShell
-# Uzycie: .\start.ps1 <sciezka do folderu data>
-# Przyklad: .\start.ps1 "C:\Studia\SEM III\Wolf\Projekt\duze-dane\data"
+# setup_hadoop.ps1 - uruchamia klaster Hadoop/Spark i uploaduje dane do HDFS
+# Uzycie: .\setup_hadoop.ps1 [-DataDir <sciezka>]
+# Przyklad: .\setup_hadoop.ps1
 
 param(
-    [Parameter(Mandatory=$true)]
-    [string]$DataDir
+    [string]$DataDir = "$PSScriptRoot\..\data"
 )
 
 $WORKSPACE_DIR = "D:\hadoop-workspace"
 $CONTAINER     = "master"
-$COMPOSE_DIR   = "$PSScriptRoot\spark\docker-script\hadoop"
+$COMPOSE_DIR   = "$PSScriptRoot\..\spark\docker-script\hadoop"
 $DATASETS      = @("gtfs", "osm", "real_estate_merged")
 
 function info { param($msg) Write-Host "[INFO]  $msg" -ForegroundColor Green }
 function warn { param($msg) Write-Host "[WARN]  $msg" -ForegroundColor Yellow }
 function err  { param($msg) Write-Host "[ERROR] $msg" -ForegroundColor Red }
 
-$DataDir = (Resolve-Path $DataDir).Path
+$DataDir = (Resolve-Path $DataDir -ErrorAction Stop).Path
 
 New-Item -ItemType Directory -Force -Path $WORKSPACE_DIR | Out-Null
 
