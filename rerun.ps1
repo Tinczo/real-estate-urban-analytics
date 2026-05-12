@@ -1,1 +1,1 @@
-.\pipeline.ps1 -SkipInfrastructure -SkipAcquisition -SkipProcessing
+.\pipeline.ps1 -SkipInfrastructure -SkipAcquisition -SkipProcessing @args
