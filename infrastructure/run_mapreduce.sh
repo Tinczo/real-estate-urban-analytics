@@ -29,10 +29,11 @@ mkdir -p "$DATA/logs"
 LOG_FILE="$DATA/logs/mapreduce_$(date +%Y%m%d_%H%M%S).log"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
-info()   { echo -e "${GREEN}[INFO]${NC}  $*" | tee -a "$LOG_FILE"; }
-warn()   { echo -e "${YELLOW}[WARN]${NC}  $*" | tee -a "$LOG_FILE"; }
-error()  { echo -e "${RED}[ERROR]${NC} $*" | tee -a "$LOG_FILE"; exit 1; }
-timing() { echo -e "${YELLOW}[TIMING]${NC} $*" | tee -a "$LOG_FILE"; }
+log_plain() { sed 's/\x1b\[[0-9;]*m//g' >> "$LOG_FILE"; }
+info()   { echo -e "${GREEN}[INFO]${NC}  $*" | tee >(log_plain); }
+warn()   { echo -e "${YELLOW}[WARN]${NC}  $*" | tee >(log_plain); }
+error()  { echo -e "${RED}[ERROR]${NC} $*" | tee >(log_plain); exit 1; }
+timing() { echo -e "${YELLOW}[TIMING]${NC} $*" | tee >(log_plain); }
 
 run_timed() {
   local label="$1"; shift
