@@ -31,6 +31,47 @@ info() { echo -e "${GREEN}[INFO]${NC}  $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 step() { echo -e "\n${CYAN}===> $*${NC}"; }
 
+ensure_hadoop() {
+    # NameNode
+    if ! docker exec master hdfs dfsadmin -report >/dev/null 2>&1; then
+        warn "NameNode nie odpowiada - uruchamiam..."
+        docker exec -d master bash -c '$HADOOP_HOME/bin/hdfs namenode &>>/tmp/nn.log'
+        for i in $(seq 1 20); do
+            sleep 3
+            docker exec master hdfs dfsadmin -report >/dev/null 2>&1 && break
+            echo -e "\033[1;30m  ... czekam na NameNode ($i/20)\033[0m"
+            [ "$i" -eq 20 ] && { echo -e "${RED}[ERROR]${NC} NameNode nie wystartowal."; exit 1; }
+        done
+        docker exec master hdfs dfsadmin -safemode wait >/dev/null 2>&1
+        info "NameNode gotowy."
+    fi
+
+    # DataNodes
+    for node in slave1 slave2 slave3; do
+        docker exec "$node" pgrep -f DataNode >/dev/null 2>&1 \
+            || docker exec -d "$node" bash -c '$HADOOP_HOME/bin/hdfs datanode &>>/tmp/dn.log'
+    done
+
+    # ResourceManager
+    if ! docker exec master pgrep -f ResourceManager >/dev/null 2>&1; then
+        warn "ResourceManager nie odpowiada - uruchamiam..."
+        docker exec -d master bash -c '$HADOOP_HOME/bin/yarn resourcemanager &>>/tmp/rm.log'
+        for i in $(seq 1 20); do
+            sleep 3
+            docker exec master bash -c 'yarn node -list 2>&1 | grep -q "Total Nodes"' && break
+            echo -e "\033[1;30m  ... czekam na ResourceManager ($i/20)\033[0m"
+            [ "$i" -eq 20 ] && { echo -e "${RED}[ERROR]${NC} ResourceManager nie wystartowal."; exit 1; }
+        done
+        info "ResourceManager gotowy."
+    fi
+
+    # NodeManagery
+    for node in slave1 slave2 slave3; do
+        docker exec "$node" pgrep -f NodeManager >/dev/null 2>&1 \
+            || docker exec -d "$node" bash -c '$HADOOP_HOME/bin/yarn nodemanager &>>/tmp/nm.log'
+    done
+}
+
 t0=$(date +%s)
 step "PIPELINE START ($(date '+%Y-%m-%d %H:%M:%S'))"
 
@@ -68,6 +109,8 @@ else
 fi
 
 # ── 4. MapReduce pipeline ────────────────────────────────────────────────────
+
+ensure_hadoop
 
 if [ $SKIP_MAPREDUCE -eq 0 ]; then
     step "4/5 MapReduce pipeline (E1.1 -> E1.5 -> E1.2 -> E1.3 -> E2 -> E3)"

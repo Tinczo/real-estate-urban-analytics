@@ -1,0 +1,1 @@
+docker exec master hdfs dfs -cat "/user/hadoop/t3/part-r-00000"
