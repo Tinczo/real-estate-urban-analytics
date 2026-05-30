@@ -85,15 +85,12 @@ function Hdfs-Rm([string]$Path) {
 
 function Spark-Submit([string]$Stage, [string]$ExtraArgs) {
     $cmd = "/usr/local/spark/bin/spark-submit --master yarn --deploy-mode client --driver-memory 2g --executor-memory 2g $PySparkScript --stage $Stage $ExtraArgs"
-    $proc = Start-Process -FilePath "docker" -ArgumentList "exec", $Container, "bash", "-c", $cmd -NoNewWindow -Wait -PassThru -RedirectStandardOutput "$DataDir\logs\temp_out.log" -RedirectStandardError "$DataDir\logs\temp_err.log"
+    docker exec $Container bash -c $cmd 2>&1 | ForEach-Object {
+        Write-Host $_
+        Log-Plain $_
+    }
     
-    $out = Get-Content "$DataDir\logs\temp_out.log" -ErrorAction SilentlyContinue
-    $err = Get-Content "$DataDir\logs\temp_err.log" -ErrorAction SilentlyContinue
-    
-    if ($out) { Write-Host ($out -join "`n"); Log-Plain ($out -join "`n") }
-    if ($err) { Write-Host ($err -join "`n"); Log-Plain ($err -join "`n") }
-    
-    if ($proc.ExitCode -ne 0) {
+    if ($LASTEXITCODE -ne 0) {
         Write-ErrorMsg "PySpark Job zakonczyl sie bledem dla: $Stage"
     }
 }
