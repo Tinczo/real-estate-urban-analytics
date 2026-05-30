@@ -217,19 +217,22 @@ def run_e3(spark, input_dir, output_dir):
     rdd = spark.sparkContext.textFile(input_dir)
     
     def parse_line(line):
+        def f(s):
+            try: return float(s)
+            except: return 0.0
         csv_part = line.split('\t')[1]
         parts = csv_part.split(',')
         return {
             'miasto': parts[5],
-            'cenaM2': float(parts[2]),
-            'cenaCalkowita': float(parts[3]),
-            'powierzchnia': float(parts[4]),
-            'wskPrzep': float(parts[6]),
-            'indHandlu': float(parts[7]),
-            'indGastro': float(parts[8]),
-            'indRekr': float(parts[9]),
-            'indEduk': float(parts[10]),
-            'wspHalas': float(parts[11])
+            'cenaM2': f(parts[2]),
+            'cenaCalkowita': f(parts[3]),
+            'powierzchnia': f(parts[4]),
+            'wskPrzep': f(parts[6]),
+            'indHandlu': f(parts[7]),
+            'indGastro': f(parts[8]),
+            'indRekr': f(parts[9]),
+            'indEduk': f(parts[10]),
+            'wspHalas': f(parts[11])
         }
         
     df = rdd.map(parse_line).toDF()
