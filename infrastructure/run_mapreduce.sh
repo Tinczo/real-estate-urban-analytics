@@ -69,6 +69,13 @@ YARN_REPORT=$(docker exec "$CONTAINER" yarn node -list 2>&1 || true)
 echo "$YARN_REPORT" | grep -q "RUNNING" \
   || error "YARN (ResourceManager) nie dziala. Sprobuj zrestartowac klaster."
 
+# Wyjdz z safe mode jesli jest aktywny (DataNodes mogl nie zdarzyc zaraportowac wszystkich blokow)
+if docker exec "$CONTAINER" hdfs dfsadmin -report 2>&1 | grep -q "Safe mode is ON"; then
+  info "HDFS w safe mode - wymuszam wyjscie..."
+  docker exec "$CONTAINER" hdfs dfsadmin -safemode forceExit >/dev/null 2>&1 || true
+  info "Safe mode wylaczony."
+fi
+
 docker exec "$CONTAINER" bash -c "test -f $JAR_HDFS_PATH" 2>/dev/null || {
   info "JAR nie znaleziony na masterze - szukam w target/..."
   JAR_LOCAL=$(find "$PROJECT_DIR/mapreduce/target" "$PROJECT_DIR/target" -maxdepth 1 \

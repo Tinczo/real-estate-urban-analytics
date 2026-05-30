@@ -1,0 +1,1 @@
+docker exec master hdfs dfsadmin -safemode forceExit 2>&1
