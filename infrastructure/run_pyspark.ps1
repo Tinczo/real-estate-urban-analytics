@@ -1,188 +1,158 @@
-param (
+# run_pyspark.ps1 - uruchamia pipeline w PySpark na klastrze Hadoop/Spark
+# Uzycie: .\run_pyspark.ps1 [sciezka_do_projektu] [sciezka_do_danych] [job_flag]
+# Flagi: e1_1, e1_5, e1_2, e1_3, e2, e3, all
+# Przyklad: .\run_pyspark.ps1
+
+param(
     [string]$ProjectDir = "",
-    [string]$DataDir = "",
-    [string]$JobFlag = "all"
+    [string]$DataDir    = "",
+    [string]$JobFlag    = "all"
 )
 
-$ErrorActionPreference = "Stop"
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$SCRIPT_DIR   = $PSScriptRoot
+$PROJECT_DIR  = if ($ProjectDir) { $ProjectDir } else { "$SCRIPT_DIR\.." }
+$DATA         = if ($DataDir)    { $DataDir }    else { "$PROJECT_DIR\data" }
+$CONTAINER    = "spark"
+$MASTER       = "master"
+$PYSPARK_SCRIPT = "/tmp/spark_pipeline.py"
 
-if ([string]::IsNullOrEmpty($ProjectDir)) {
-    $ProjectDir = (Resolve-Path "$ScriptDir\..").ProviderPath
-} else {
-    $ProjectDir = (Resolve-Path $ProjectDir).ProviderPath
-}
+$HDFS_GTFS         = "/gtfs"
+$HDFS_OSM_CSV      = "/osm_csv"
+$HDFS_RE_GEOCODED  = "/real_estate_geocoded"
+$HDFS_T1_1 = "/user/hadoop/t1_1_py"
+$HDFS_T1_5 = "/user/hadoop/t1_5_py"
+$HDFS_T1_2 = "/user/hadoop/t1_2_py"
+$HDFS_T1_3 = "/user/hadoop/t1_3_py"
+$HDFS_T2   = "/user/hadoop/t2_py"
+$HDFS_T3   = "/user/hadoop/t3_py"
 
-if ([string]::IsNullOrEmpty($DataDir)) {
-    $DataDir = (Resolve-Path "$ProjectDir\data").ProviderPath
-} else {
-    $DataDir = (Resolve-Path $DataDir).ProviderPath
-}
+New-Item -ItemType Directory -Force "$DATA\logs" | Out-Null
+$LOG_FILE = "$DATA\logs\pyspark_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
 
-$Container = "spark"
-$MasterContainer = "master"
-
-# Skrypt python z pipeline'em
-$PySparkScript = "/tmp/spark_pipeline.py"
-
-# Sciezki HDFS
-$HdfsGtfs = "/gtfs"
-$HdfsOsmCsv = "/osm_csv"
-$HdfsReGeocoded = "/real_estate_geocoded"
-$HdfsT1_1 = "/user/hadoop/t1_1_py"
-$HdfsT1_5 = "/user/hadoop/t1_5_py"
-$HdfsT1_2 = "/user/hadoop/t1_2_py"
-$HdfsT1_3 = "/user/hadoop/t1_3_py"
-$HdfsT2 = "/user/hadoop/t2_py"
-$HdfsT3 = "/user/hadoop/t3_py"
-
-if (-not (Test-Path "$DataDir\logs")) {
-    New-Item -ItemType Directory -Path "$DataDir\logs" | Out-Null
-}
-$DateStr = Get-Date -Format "yyyyMMdd_HHmmss"
-$LogFile = "$DataDir\logs\pyspark_$DateStr.log"
-
-function Log-Plain([string]$Msg) {
-    # remove ansi codes if any, but since we echo plain text from ps we can just write
-    $cleanMsg = $Msg -replace "`e\[[0-9;]*m", ""
-    Add-Content -Path $LogFile -Value $cleanMsg
-}
-
-function Write-Info([string]$Msg) {
-    Write-Host "[INFO]  $Msg" -ForegroundColor Green
-    Log-Plain "[INFO]  $Msg"
-}
-
-function Write-Warn([string]$Msg) {
-    Write-Host "[WARN]  $Msg" -ForegroundColor Yellow
-    Log-Plain "[WARN]  $Msg"
-}
-
-function Write-ErrorMsg([string]$Msg) {
-    Write-Host "[ERROR] $Msg" -ForegroundColor Red
-    Log-Plain "[ERROR] $Msg"
+function info   { param($m) $msg = "[INFO]  $m"; Write-Host $msg -ForegroundColor Green;  Add-Content $LOG_FILE $msg }
+function warn   { param($m) $msg = "[WARN]  $m"; Write-Host $msg -ForegroundColor Yellow; Add-Content $LOG_FILE $msg }
+function timing { param($m) $msg = "[TIMING] $m"; Write-Host $msg -ForegroundColor Yellow; Add-Content $LOG_FILE $msg }
+function error_ {
+    param($m)
+    $msg = "[ERROR] $m"
+    Write-Host $msg -ForegroundColor Red
+    Add-Content $LOG_FILE $msg
     exit 1
 }
 
-function Write-Timing([string]$Msg) {
-    Write-Host "[TIMING] $Msg" -ForegroundColor Yellow
-    Log-Plain "[TIMING] $Msg"
-}
-
-function Invoke-Timed {
-    param([string]$Label, [scriptblock]$Action)
+function Run-Timed {
+    param([string]$Label, [scriptblock]$Block)
     $t0 = Get-Date
-    Write-Info "==> START: $Label ($($t0.ToString('HH:mm:ss')))"
-    & $Action
-    $t1 = Get-Date
-    $elapsed = [math]::Round(($t1 - $t0).TotalSeconds)
-    Write-Timing "$Label: ${elapsed}s"
+    info "==> START: $Label ($((Get-Date).ToString('HH:mm:ss')))"
+    & $Block
+    $elapsed = [int]((Get-Date) - $t0).TotalSeconds
+    timing "${Label}: ${elapsed}s"
 }
 
-function Hdfs-Rm([string]$Path) {
-    docker exec $MasterContainer bash -c "hdfs dfs -rm -r -skipTrash $Path 2>/dev/null || true" | Out-Null
+function Hdfs-Rm {
+    param([string]$Path)
+    docker exec $MASTER bash -c "hdfs dfs -rm -r -skipTrash $Path 2>/dev/null || true" | Out-Null
 }
 
-function Spark-Submit([string]$Stage, [string]$ExtraArgs) {
-    $cmd = "/usr/local/spark/bin/spark-submit --master yarn --deploy-mode client --driver-memory 2g --executor-memory 2g $PySparkScript --stage $Stage $ExtraArgs"
-    docker exec $Container bash -c $cmd 2>&1 | ForEach-Object {
-        Write-Host $_
-        Log-Plain $_
-    }
-    
-    if ($LASTEXITCODE -ne 0) {
-        Write-ErrorMsg "PySpark Job zakonczyl sie bledem dla: $Stage"
-    }
+function Spark-Submit {
+    param([string]$Stage, [string]$ExtraArgs = "")
+    $cmd = "/usr/local/spark/bin/spark-submit --master yarn --deploy-mode client --driver-memory 2g --executor-memory 2g $PYSPARK_SCRIPT --stage $Stage $ExtraArgs"
+    docker exec $CONTAINER bash -c $cmd 2>&1 | Tee-Object -Append -FilePath $LOG_FILE
+    if ($LASTEXITCODE -ne 0) { error_ "PySpark Job zakonczyl sie bledem dla: $Stage" }
 }
 
 # ── Weryfikacja srodowiska ────────────────────────────────────────────────────
 
-$sparkRunning = docker ps --format '{{.Names}}' | Select-String "^${Container}$"
-if (-not $sparkRunning) { Write-ErrorMsg "Kontener '$Container' nie dziala. Uruchom klaster przez start.ps1" }
+$running = docker ps --format '{{.Names}}'
+if ($running -notcontains $CONTAINER) { error_ "Kontener '$CONTAINER' nie dziala. Uruchom klaster." }
+if ($running -notcontains $MASTER)    { error_ "Kontener '$MASTER' nie dziala. Uruchom klaster." }
 
-$masterRunning = docker ps --format '{{.Names}}' | Select-String "^${MasterContainer}$"
-if (-not $masterRunning) { Write-ErrorMsg "Kontener '$MasterContainer' nie dziala. Uruchom klaster przez start.ps1" }
+# Wyjdz z safe mode jesli aktywny
+$smStatus = docker exec $MASTER hdfs dfsadmin -report 2>&1 | Select-String "Safe mode is ON"
+if ($smStatus) {
+    warn "HDFS w safe mode - wymuszam wyjscie..."
+    docker exec $MASTER hdfs dfsadmin -safemode forceExit 2>&1 | Out-Null
+    info "Safe mode wylaczony."
+}
 
-Write-Info "Kopiowanie spark_pipeline.py do kontenera spark..."
-docker cp "$ProjectDir\spark\src\spark_pipeline.py" "${Container}:${PySparkScript}"
+info "Kopiowanie spark_pipeline.py do kontenera spark..."
+docker cp "$PROJECT_DIR\spark\src\spark_pipeline.py" "${CONTAINER}:${PYSPARK_SCRIPT}"
 
 # ── Joby ─────────────────────────────────────────────────────────────────────
 
-function Run-E1-1 {
-    $check = docker exec $MasterContainer bash -c "hdfs dfs -test -e $HdfsGtfs/stop_times.txt && echo 1 || echo 0"
-    if ($check.Trim() -eq "0") { Write-ErrorMsg "Brak danych GTFS na HDFS ($HdfsGtfs/stop_times.txt). Uruchom start.ps1" }
-    
-    Hdfs-Rm $HdfsT1_1
-    Spark-Submit "e1_1" "--stop_times $HdfsGtfs/stop_times.txt --gtfs_cache $HdfsGtfs --t1_1 $HdfsT1_1"
+function Run-E1_1 {
+    docker exec $MASTER bash -c "hdfs dfs -test -e $HDFS_GTFS/stop_times.txt" 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { error_ "Brak danych GTFS na HDFS ($HDFS_GTFS/stop_times.txt). Uruchom start.sh" }
+    Hdfs-Rm $HDFS_T1_1
+    Spark-Submit "e1_1" "--stop_times $HDFS_GTFS/stop_times.txt --gtfs_cache $HDFS_GTFS --t1_1 $HDFS_T1_1"
 }
 
-function Run-E1-5 {
-    Hdfs-Rm $HdfsT1_5
-    Spark-Submit "e1_5" "--t1_1 $HdfsT1_1 --t1_5 $HdfsT1_5"
+function Run-E1_5 {
+    Hdfs-Rm $HDFS_T1_5
+    Spark-Submit "e1_5" "--t1_1 $HDFS_T1_1 --t1_5 $HDFS_T1_5"
 }
 
-function Run-E1-2 {
-    Hdfs-Rm $HdfsT1_2
-    Spark-Submit "e1_2" "--osm_csv $HdfsOsmCsv --t1_2 $HdfsT1_2"
+function Run-E1_2 {
+    Hdfs-Rm $HDFS_T1_2
+    Spark-Submit "e1_2" "--osm_csv $HDFS_OSM_CSV --t1_2 $HDFS_T1_2"
 }
 
-function Run-E1-3 {
-    $check = docker exec $MasterContainer bash -c "hdfs dfs -test -d $HdfsReGeocoded && echo 1 || echo 0"
-    if ($check.Trim() -eq "1") {
-        Write-Info "==> Dane geocodowane juz sa na HDFS ($HdfsReGeocoded) - pomijam geocoding i upload."
+function Run-E1_3 {
+    docker exec $MASTER bash -c "hdfs dfs -test -d $HDFS_RE_GEOCODED" 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        info "==> Dane geocodowane juz sa na HDFS ($HDFS_RE_GEOCODED) - pomijam geocoding i upload."
     } else {
-        Write-Info "==> Geocoding nieruchomosci (Nominatim)..."
-        python3 "$ProjectDir\scripts\processing\geocode_real_estate.py" "$DataDir\real_estate_merged" "$DataDir\real_estate_geocoded"
-        
-        Write-Info "==> Upload danych geocodowanych do HDFS..."
-        $files = Get-ChildItem -Path "$DataDir\real_estate_geocoded" -File -Recurse
+        info "==> Geocoding nieruchomosci (Nominatim)..."
+        python "$PROJECT_DIR\scripts\processing\geocode_real_estate.py" `
+            "$DATA\real_estate_merged" `
+            "$DATA\real_estate_geocoded"
+
+        info "==> Upload danych geocodowanych do HDFS..."
+        $files = Get-ChildItem "$DATA\real_estate_geocoded" -Recurse -File
         foreach ($f in $files) {
-            $relPath = $f.FullName.Substring((Resolve-Path "$DataDir\real_estate_geocoded").ProviderPath.Length + 1).Replace('\', '/')
-            # Using docker cp instead of piping cat into docker exec because powershell piping to native exes can corrupt binary data/newlines
-            $tmpHdfs = "$HdfsReGeocoded/$relPath"
-            docker exec $MasterContainer bash -c "mkdir -p `$(dirname $tmpHdfs)"
-            docker cp $f.FullName "${MasterContainer}:/tmp/upload.csv"
-            docker exec $MasterContainer bash -c "hdfs dfs -D dfs.replication=1 -put -f /tmp/upload.csv $tmpHdfs"
+            $rel = $f.FullName.Substring("$DATA\real_estate_geocoded\".Length) -replace '\\', '/'
+            Get-Content $f.FullName -Raw | docker exec -i $MASTER bash -c `
+                "hdfs dfs -D dfs.replication=1 -put - $HDFS_RE_GEOCODED/$rel"
         }
-        docker exec $MasterContainer bash -c "hdfs dfs -setrep -R 3 $HdfsReGeocoded" | Out-Null
+        docker exec $MASTER bash -c "hdfs dfs -setrep -R 3 $HDFS_RE_GEOCODED" 2>&1 | Out-Null
     }
-    
-    Hdfs-Rm $HdfsT1_3
-    Spark-Submit "e1_3" "--re_geocoded $HdfsReGeocoded --t1_3 $HdfsT1_3"
+
+    Hdfs-Rm $HDFS_T1_3
+    Spark-Submit "e1_3" "--re_geocoded $HDFS_RE_GEOCODED --t1_3 $HDFS_T1_3"
 }
 
 function Run-E2 {
-    Hdfs-Rm $HdfsT2
-    Spark-Submit "e2" "--t1_5 $HdfsT1_5 --t1_2 $HdfsT1_2 --t1_3 $HdfsT1_3 --t2 $HdfsT2"
+    Hdfs-Rm $HDFS_T2
+    Spark-Submit "e2" "--t1_5 $HDFS_T1_5 --t1_2 $HDFS_T1_2 --t1_3 $HDFS_T1_3 --t2 $HDFS_T2"
 }
 
 function Run-E3 {
-    Hdfs-Rm $HdfsT3
-    Spark-Submit "e3" "--t2 $HdfsT2 --t3 $HdfsT3"
+    Hdfs-Rm $HDFS_T3
+    Spark-Submit "e3" "--t2 $HDFS_T2 --t3 $HDFS_T3"
 }
 
 # ── Dispatch ──────────────────────────────────────────────────────────────────
 
-Write-Info "Uruchamianie: $JobFlag"
+info "Uruchamianie: $JobFlag"
 
 switch ($JobFlag) {
-    "e1_1" { Invoke-Timed "E1.1" { Run-E1-1 } }
-    "e1_5" { Invoke-Timed "E1.5" { Run-E1-5 } }
-    "e1_2" { Invoke-Timed "E1.2" { Run-E1-2 } }
-    "e1_3" { Invoke-Timed "E1.3" { Run-E1-3 } }
-    "e2"   { Invoke-Timed "E2"   { Run-E2 } }
-    "e3"   { Invoke-Timed "E3"   { Run-E3 } }
+    "e1_1" { Run-Timed "E1.1" { Run-E1_1 } }
+    "e1_5" { Run-Timed "E1.5" { Run-E1_5 } }
+    "e1_2" { Run-Timed "E1.2" { Run-E1_2 } }
+    "e1_3" { Run-Timed "E1.3" { Run-E1_3 } }
+    "e2"   { Run-Timed "E2"   { Run-E2   } }
+    "e3"   { Run-Timed "E3"   { Run-E3   } }
     "all"  {
-        Invoke-Timed "E1.1" { Run-E1-1 }
-        Invoke-Timed "E1.5" { Run-E1-5 }
-        Invoke-Timed "E1.2" { Run-E1-2 }
-        Invoke-Timed "E1.3" { Run-E1-3 }
-        Invoke-Timed "E2"   { Run-E2 }
-        Invoke-Timed "E3"   { Run-E3 }
+        Run-Timed "E1.1" { Run-E1_1 }
+        Run-Timed "E1.5" { Run-E1_5 }
+        Run-Timed "E1.2" { Run-E1_2 }
+        Run-Timed "E1.3" { Run-E1_3 }
+        Run-Timed "E2"   { Run-E2   }
+        Run-Timed "E3"   { Run-E3   }
     }
-    default { Write-ErrorMsg "Nieznana flaga: '$JobFlag'. Dostepne: e1_1, e1_5, e1_2, e1_3, e2, e3, all" }
+    default { error_ "Nieznana flaga: '$JobFlag'. Dostepne: e1_1, e1_5, e1_2, e1_3, e2, e3, all" }
 }
 
-Write-Info "Gotowe. Log: $LogFile"
-Write-Timing "Podsumowanie czasow:"
-Select-String -Path $LogFile -Pattern "\[TIMING\]" | ForEach-Object { Write-Host $_.Line }
+info "Gotowe. Log: $LOG_FILE"
+timing "Podsumowanie czasow:"
+Select-String "\[TIMING\]" $LOG_FILE | ForEach-Object { $_.Line }

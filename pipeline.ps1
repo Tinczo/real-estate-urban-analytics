@@ -24,6 +24,60 @@ function check {
     }
 }
 
+function Wait-For {
+    param($label, $check, [int]$max = 20)
+    $n = 0
+    while ($true) {
+        Start-Sleep -Seconds 3
+        & $check | Out-Null
+        if ($LASTEXITCODE -eq 0) { break }
+        $n++
+        if ($n -gt $max) {
+            Write-Host "[ERROR] $label nie wystartowal po $($max*3)s." -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "  ... czekam na $label ($n/$max)" -ForegroundColor DarkGray
+    }
+}
+
+function Ensure-Hadoop {
+    # NameNode
+    docker exec master hdfs dfsadmin -report 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        warn "NameNode nie odpowiada - uruchamiam..."
+        docker exec -d master bash -c '$HADOOP_HOME/bin/hdfs namenode &>>/tmp/nn.log' 2>&1 | Out-Null
+        Wait-For "NameNode" { docker exec master hdfs dfsadmin -report 2>&1 }
+        docker exec master bash -c '$HADOOP_HOME/bin/hdfs dfsadmin -safemode wait' 2>&1 | Out-Null
+        docker exec master bash -c '$HADOOP_HOME/bin/hdfs dfsadmin -safemode forceExit' 2>&1 | Out-Null
+        info "NameNode gotowy."
+    }
+
+    # DataNodes
+    foreach ($node in @("slave1","slave2","slave3")) {
+        docker exec $node bash -c 'pgrep -f DataNode' 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            docker exec -d $node bash -c '$HADOOP_HOME/bin/hdfs datanode &>>/tmp/dn.log' 2>&1 | Out-Null
+        }
+    }
+
+    # ResourceManager
+    docker exec master bash -c 'pgrep -f ResourceManager' 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        warn "ResourceManager nie odpowiada - uruchamiam..."
+        docker exec -d master bash -c '$HADOOP_HOME/bin/yarn resourcemanager &>>/tmp/rm.log' 2>&1 | Out-Null
+        Wait-For "ResourceManager" { docker exec master bash -c 'yarn node -list 2>&1 | grep -q "Total Nodes"' }
+        info "ResourceManager gotowy."
+    }
+
+    # NodeManagery
+    foreach ($node in @("slave1","slave2","slave3")) {
+        docker exec $node bash -c 'pgrep -f NodeManager' 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            docker exec -d $node bash -c '$HADOOP_HOME/bin/yarn nodemanager &>>/tmp/nm.log' 2>&1 | Out-Null
+        }
+    }
+}
+
 $t0 = Get-Date
 step "PIPELINE START ($(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'))"
 
@@ -69,6 +123,8 @@ if (-not $SkipProcessing) {
 }
 
 # ── 4. MapReduce pipeline ────────────────────────────────────────────────────
+
+Ensure-Hadoop
 
 if (-not $SkipMapReduce) {
     step "4/5 MapReduce pipeline (E1.1 -> E1.5 -> E1.2 -> E1.3 -> E2 -> E3)"
