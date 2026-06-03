@@ -133,14 +133,18 @@ run_exp_reducers() {
 }
 
 run_e1_2() {
-  info "==> Konwersja OSM Parquet -> CSV (PySpark)..."
-  docker cp "$PROJECT_DIR/scripts/processing/osm_to_csv.py" spark:/tmp/osm_to_csv.py
-  docker exec spark bash -c "
-    /usr/local/spark-3.4.0-bin-hadoop3/bin/spark-submit \
-      --master yarn \
-      --deploy-mode client \
-      /tmp/osm_to_csv.py
-  "
+  if docker exec "$CONTAINER" bash -c "hdfs dfs -test -d $HDFS_OSM_CSV" 2>/dev/null; then
+    info "==> Dane OSM CSV juz sa na HDFS ($HDFS_OSM_CSV) - pomijam konwersje."
+  else
+    info "==> Konwersja OSM Parquet -> CSV (PySpark)..."
+    docker cp "$PROJECT_DIR/scripts/processing/osm_to_csv.py" spark:/tmp/osm_to_csv.py
+    docker exec spark bash -c "
+      /usr/local/spark-3.4.0-bin-hadoop3/bin/spark-submit \
+        --master yarn \
+        --deploy-mode client \
+        /tmp/osm_to_csv.py
+    "
+  fi
 
   hdfs_rm "$HDFS_T1_2"
   yarn_job "$HDFS_T1_2" $JAR_HDFS_PATH gtfs.OsmE12 $HDFS_OSM_CSV $HDFS_T1_2

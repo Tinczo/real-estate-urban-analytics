@@ -93,6 +93,17 @@ function Run-E1_5 {
 }
 
 function Run-E1_2 {
+    $check = docker exec $MASTER bash -c "hdfs dfs -test -d $HDFS_OSM_CSV && echo 1 || echo 0"
+    if ($check.Trim() -eq "1") {
+        info "==> Dane OSM CSV juz sa na HDFS ($HDFS_OSM_CSV) - pomijam konwersje."
+    } else {
+        info "==> Konwersja OSM Parquet -> CSV (PySpark)..."
+        docker cp "$PROJECT_DIR\scripts\processing\osm_to_csv.py" "${CONTAINER}:/tmp/osm_to_csv.py"
+        $cmd = "/usr/local/spark/bin/spark-submit --master yarn --deploy-mode client /tmp/osm_to_csv.py"
+        docker exec $CONTAINER bash -c $cmd 2>&1 | Tee-Object -Append -FilePath $LOG_FILE
+        if ($LASTEXITCODE -ne 0) { error_ "Konwersja OSM zakonczyla sie bledem." }
+    }
+
     Hdfs-Rm $HDFS_T1_2
     Spark-Submit "e1_2" "--osm_csv $HDFS_OSM_CSV --t1_2 $HDFS_T1_2"
 }

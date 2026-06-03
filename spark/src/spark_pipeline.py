@@ -42,15 +42,13 @@ def geohash_encode(latitude, longitude, precision=6):
             ch = 0
     return ''.join(geohash)
 
-def run_e1_1(spark, stop_times_path, cache_dir, output_path, disable_broadcast=False):
-    print("==> Running E1.1: GTFS Extract + Map Side Join")
+def _logic_e1_1(spark, stop_times_path, cache_dir, disable_broadcast):
     stop_times = spark.read.csv(stop_times_path, header=True)
     trips = spark.read.csv(f"{cache_dir}/trips.txt", header=True)
     routes = spark.read.csv(f"{cache_dir}/routes.txt", header=True)
     calendar = spark.read.csv(f"{cache_dir}/calendar.txt", header=True)
     stops = spark.read.csv(f"{cache_dir}/stops.txt", header=True)
     
-    # Filter calendar for workdays
     calendar = calendar.filter((col("monday") == "1") | (col("tuesday") == "1") | 
                                (col("wednesday") == "1") | (col("thursday") == "1") | 
                                (col("friday") == "1")).select("service_id").distinct()
@@ -73,24 +71,31 @@ def run_e1_1(spark, stop_times_path, cache_dir, output_path, disable_broadcast=F
                        .join(b(stops), "stop_id")
     
     res = joined.select("stop_id", "stop_lat", "stop_lon", "geoId", "route_type", "arrival_time")
+    return res
+
+def run_e1_1(spark, stop_times_path, cache_dir, output_path, disable_broadcast=False):
+    print("==> Running E1.1: GTFS Extract + Map Side Join")
+    res = _logic_e1_1(spark, stop_times_path, cache_dir, disable_broadcast)
     res.write.parquet(output_path, mode="overwrite")
 
-def run_e1_5(spark, input_path, output_path, reducers=1):
-    print(f"==> Running E1.5: GTFS Aggregation (reducers={reducers})")
-    df = spark.read.parquet(input_path)
+def _logic_e1_5(df, reducers):
     df = df.withColumn("hour", split(col("arrival_time"), ":")[0].cast("int"))
     df = df.filter((col("hour") >= 7) & (col("hour") <= 9))
     
     if reducers:
-        spark.conf.set("spark.sql.shuffle.partitions", str(reducers))
+        df.sparkSession.conf.set("spark.sql.shuffle.partitions", str(reducers))
     
     agg_df = df.groupBy("stop_id", "stop_lat", "stop_lon", "geoId") \
                .count().withColumnRenamed("count", "score")
-               
+    return agg_df
+
+def run_e1_5(spark, input_path, output_path, reducers=1):
+    print(f"==> Running E1.5: GTFS Aggregation (reducers={reducers})")
+    df = spark.read.parquet(input_path)
+    agg_df = _logic_e1_5(df, reducers)
     agg_df.write.parquet(output_path, mode="overwrite")
 
-def run_e1_2(spark, input_path, output_path):
-    print("==> Running E1.2: OSM Extraction")
+def _logic_e1_2(spark, input_path):
     df = spark.read.csv(input_path, header=True)
     df = df.select(
         col("lat").cast("double"),
@@ -101,13 +106,16 @@ def run_e1_2(spark, input_path, output_path):
     
     geohash_udf = udf(lambda lat, lon: geohash_encode(lat, lon, 6), StringType())
     df = df.withColumn("geoId", geohash_udf("lat", "lon"))
+    return df
+
+def run_e1_2(spark, input_path, output_path):
+    print("==> Running E1.2: OSM Extraction")
+    df = _logic_e1_2(spark, input_path)
     df.write.parquet(output_path, mode="overwrite")
 
-def run_e1_3(spark, input_path, output_path):
-    print("==> Running E1.3: Real Estate Normalization")
+def _logic_e1_3(spark, input_path):
     df = spark.read.option("header", "true").option("sep", ";").csv(input_path)
     
-    # rename columns to match MR logic (Cena m2 -> cenaM2, itd)
     df = df.select(
         col("Miejscowość").alias("miasto"),
         col("Cena m2").cast("double").alias("cenaM2"),
@@ -115,10 +123,16 @@ def run_e1_3(spark, input_path, output_path):
         col("Powierzchnia").cast("double").alias("powierzchnia"),
         col("lat").cast("double"),
         col("lon").cast("double")
-    ).filter(~((col("lat") == 0.0) & (col("lon") == 0.0)))
+    ).filter(~((col("lat") == 0.0) & (col("lon") == 0.0))) \
+     .dropna(subset=["cenaM2", "cenaCalkowita", "powierzchnia"])
     
     geohash_udf = udf(lambda lat, lon: geohash_encode(lat, lon, 6), StringType())
     df = df.withColumn("geoId", geohash_udf("lat", "lon"))
+    return df
+
+def run_e1_3(spark, input_path, output_path):
+    print("==> Running E1.3: Real Estate Normalization")
+    df = _logic_e1_3(spark, input_path)
     df.write.parquet(output_path, mode="overwrite")
 
 def haversine(lat1, lon1, lat2, lon2):
@@ -196,12 +210,7 @@ def compute_indicators(key, iterator):
             
         yield f"{offer['miasto']}|{key}\t,{key},{offer['cenaM2']},{offer['cenaCalkowita']},{offer['powierzchnia']},{offer['miasto']},{wsk_przep},{ind_handlu},{ind_gastro},{ind_rekr},{ind_eduk},{wsp_halas}"
 
-def run_e2(spark, t1_5_dir, t1_2_dir, t1_3_dir, output_dir):
-    print("==> Running E2: Join & Indicators calculation")
-    stops_df = spark.read.parquet(t1_5_dir)
-    pois_df = spark.read.parquet(t1_2_dir)
-    offers_df = spark.read.parquet(t1_3_dir)
-    
+def _logic_e2(stops_df, pois_df, offers_df):
     stops_rdd = stops_df.rdd.map(lambda r: (r.geoId, ('stop', r.asDict())))
     pois_rdd = pois_df.rdd.map(lambda r: (r.geoId, ('poi', r.asDict())))
     offers_rdd = offers_df.rdd.map(lambda r: (r.geoId, ('offer', r.asDict())))
@@ -209,13 +218,18 @@ def run_e2(spark, t1_5_dir, t1_2_dir, t1_3_dir, output_dir):
     joined_rdd = stops_rdd.union(pois_rdd).union(offers_rdd)
     
     res_rdd = joined_rdd.groupByKey().mapPartitions(lambda it: (out for key, vals in it for out in compute_indicators(key, [(key, v) for v in vals])))
+    return res_rdd
+
+def run_e2(spark, t1_5_dir, t1_2_dir, t1_3_dir, output_dir):
+    print("==> Running E2: Join & Indicators calculation")
+    stops_df = spark.read.parquet(t1_5_dir)
+    pois_df = spark.read.parquet(t1_2_dir)
+    offers_df = spark.read.parquet(t1_3_dir)
     
+    res_rdd = _logic_e2(stops_df, pois_df, offers_df)
     res_rdd.saveAsTextFile(output_dir)
 
-def run_e3(spark, input_dir, output_dir):
-    print("==> Running E3: Pearson Correlation Matrix")
-    rdd = spark.sparkContext.textFile(input_dir)
-    
+def _logic_e3(rdd):
     def parse_line(line):
         def f(s):
             try: return float(s)
@@ -240,9 +254,6 @@ def run_e3(spark, input_dir, output_dir):
     indicators = ['wskPrzep', 'indHandlu', 'indGastro', 'indRekr', 'indEduk', 'wspHalas']
     prices = ['cenaM2', 'cenaCalkowita', 'powierzchnia']
     
-    # Calculate correlations
-    # To output exact format as E3Reducer (miasto, wskaznik, rM2, rCal, rPow)
-    # We will compute aggregations manually per city
     aggs = []
     for x in indicators:
         for y in prices:
@@ -250,7 +261,6 @@ def run_e3(spark, input_dir, output_dir):
             
     res_df = df.groupBy("miasto").agg(*aggs)
     
-    # map to final format
     def format_output(row):
         out = []
         mapping = {
@@ -269,12 +279,31 @@ def run_e3(spark, input_dir, output_dir):
         return out
         
     final_rdd = res_df.rdd.flatMap(format_output)
+    return final_rdd
+
+def run_e3(spark, input_dir, output_dir):
+    print("==> Running E3: Pearson Correlation Matrix")
+    rdd = spark.sparkContext.textFile(input_dir)
+    final_rdd = _logic_e3(rdd)
     final_rdd.saveAsTextFile(output_dir)
+
+def run_prod(spark, args):
+    print("==> Running PROD: Holistic DAG Execution Mode")
+    res_e1_1 = _logic_e1_1(spark, args.stop_times, args.gtfs_cache, args.disable_broadcast)
+    res_e1_5 = _logic_e1_5(res_e1_1, args.reducers)
+    
+    res_e1_2 = _logic_e1_2(spark, args.osm_csv)
+    res_e1_3 = _logic_e1_3(spark, args.re_geocoded)
+    
+    res_e2_rdd = _logic_e2(res_e1_5, res_e1_2, res_e1_3)
+    final_rdd = _logic_e3(res_e2_rdd)
+    
+    final_rdd.saveAsTextFile(args.t3)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="PySpark GTFS/RealEstate Pipeline")
-    parser.add_argument("--stage", required=True, choices=["e1_1", "e1_5", "e1_2", "e1_3", "e2", "e3", "all"])
+    parser.add_argument("--stage", required=True, choices=["e1_1", "e1_5", "e1_2", "e1_3", "e2", "e3", "all", "prod"])
     parser.add_argument("--stop_times", default="/gtfs/stop_times.txt")
     parser.add_argument("--gtfs_cache", default="/gtfs")
     parser.add_argument("--osm_csv", default="/osm_csv")
@@ -292,17 +321,20 @@ if __name__ == "__main__":
     
     spark = SparkSession.builder.appName(f"PySpark Pipeline: {args.stage}").getOrCreate()
     
-    if args.stage in ["e1_1", "all"]:
-        run_e1_1(spark, args.stop_times, args.gtfs_cache, args.t1_1, args.disable_broadcast)
-    if args.stage in ["e1_5", "all"]:
-        run_e1_5(spark, args.t1_1, args.t1_5, args.reducers)
-    if args.stage in ["e1_2", "all"]:
-        run_e1_2(spark, args.osm_csv, args.t1_2)
-    if args.stage in ["e1_3", "all"]:
-        run_e1_3(spark, args.re_geocoded, args.t1_3)
-    if args.stage in ["e2", "all"]:
-        run_e2(spark, args.t1_5, args.t1_2, args.t1_3, args.t2)
-    if args.stage in ["e3", "all"]:
-        run_e3(spark, args.t2, args.t3)
-        
+    if args.stage == "prod":
+        run_prod(spark, args)
+    else:
+        if args.stage in ["e1_1", "all"]:
+            run_e1_1(spark, args.stop_times, args.gtfs_cache, args.t1_1, args.disable_broadcast)
+        if args.stage in ["e1_5", "all"]:
+            run_e1_5(spark, args.t1_1, args.t1_5, args.reducers)
+        if args.stage in ["e1_2", "all"]:
+            run_e1_2(spark, args.osm_csv, args.t1_2)
+        if args.stage in ["e1_3", "all"]:
+            run_e1_3(spark, args.re_geocoded, args.t1_3)
+        if args.stage in ["e2", "all"]:
+            run_e2(spark, args.t1_5, args.t1_2, args.t1_3, args.t2)
+        if args.stage in ["e3", "all"]:
+            run_e3(spark, args.t2, args.t3)
+            
     spark.stop()

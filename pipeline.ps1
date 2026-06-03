@@ -8,7 +8,8 @@ param(
     [switch]$SkipAcquisition,
     [switch]$SkipProcessing,
     [switch]$SkipMapReduce,
-    [switch]$SkipExperiments
+    [switch]$SkipExperiments,
+    [string]$Engine = "mapreduce"
 )
 
 $ROOT = $PSScriptRoot
@@ -122,12 +123,12 @@ if (-not $SkipProcessing) {
     warn "3/5 Pomijam przetwarzanie (-SkipProcessing)"
 }
 
-# ── 4. MapReduce pipeline ────────────────────────────────────────────────────
+# ── 4. Pipeline ──────────────────────────────────────────────────────────────
 
 Ensure-Hadoop
 
 if (-not $SkipMapReduce) {
-    step "4/5 MapReduce pipeline (E1.1 -> E1.5 -> E1.2 -> E1.3 -> E2 -> E3)"
+    step "4/5 Pipeline (Engine: $Engine)"
 
     # Upload brakujacych danych na HDFS
     $hdfsDatasets = [ordered]@{
@@ -161,36 +162,46 @@ if (-not $SkipMapReduce) {
         }
     }
 
-    # JAR
-    $jar = Get-ChildItem "$ROOT\mapreduce\target" -Filter "mapreduce-*-SNAPSHOT.jar" -ErrorAction SilentlyContinue |
-           Where-Object { $_.Name -notlike "original-*" } | Select-Object -First 1
-    if (-not $jar) {
-        info "Buduje JAR (mvn clean package)..."
-        & mvn -f "$ROOT\mapreduce\pom.xml" clean package -DskipTests -q
+    if ($Engine -eq "spark" -or $Engine -eq "pyspark") {
+        & "$ROOT\infrastructure\run_pyspark.ps1" -ProjectDir $ROOT -DataDir $DATA -JobFlag all
+        check
+    } else {
+        # JAR
+        $jar = Get-ChildItem "$ROOT\mapreduce\target" -Filter "mapreduce-*-SNAPSHOT.jar" -ErrorAction SilentlyContinue |
+               Where-Object { $_.Name -notlike "original-*" } | Select-Object -First 1
+        if (-not $jar) {
+            info "Buduje JAR (mvn clean package)..."
+            & mvn -f "$ROOT\mapreduce\pom.xml" clean package -DskipTests -q
+            check
+        }
+        $jar = Get-ChildItem "$ROOT\mapreduce\target" -Filter "mapreduce-*-SNAPSHOT.jar" |
+               Where-Object { $_.Name -notlike "original-*" } | Select-Object -First 1
+        docker cp $jar.FullName "master:/data/hadoop/mapreduce-1.0-SNAPSHOT.jar" 2>&1 | Out-Null
+        info "JAR skopiowany na mastera."
+
+        $bashRoot = '/mnt/' + $ROOT[0].ToString().ToLower() + '/' + $ROOT.Substring(3) -replace '\\', '/'
+        $bashData = '/mnt/' + $DATA[0].ToString().ToLower() + '/' + $DATA.Substring(3) -replace '\\', '/'
+        bash -c "'$bashRoot/infrastructure/run_mapreduce.sh' '$bashRoot' '$bashData' all"
         check
     }
-    $jar = Get-ChildItem "$ROOT\mapreduce\target" -Filter "mapreduce-*-SNAPSHOT.jar" |
-           Where-Object { $_.Name -notlike "original-*" } | Select-Object -First 1
-    docker cp $jar.FullName "master:/data/hadoop/mapreduce-1.0-SNAPSHOT.jar" 2>&1 | Out-Null
-    info "JAR skopiowany na mastera."
-
-    $bashRoot = '/mnt/' + $ROOT[0].ToString().ToLower() + '/' + $ROOT.Substring(3) -replace '\\', '/'
-    $bashData = '/mnt/' + $DATA[0].ToString().ToLower() + '/' + $DATA.Substring(3) -replace '\\', '/'
-    bash -c "'$bashRoot/infrastructure/run_mapreduce.sh' '$bashRoot' '$bashData' all"
-    check
 } else {
-    warn "4/5 Pomijam MapReduce (-SkipMapReduce)"
+    warn "4/5 Pomijam Pipeline (-SkipMapReduce)"
 }
 
 # ── 5. Eksperymenty ──────────────────────────────────────────────────────────
 
 if (-not $SkipExperiments) {
-    step "5/5 Eksperymenty (combiner, reducery)"
-    $bashRoot = '/mnt/' + $ROOT[0].ToString().ToLower() + '/' + $ROOT.Substring(3) -replace '\\', '/'
-    $bashData = '/mnt/' + $DATA[0].ToString().ToLower() + '/' + $DATA.Substring(3) -replace '\\', '/'
-    bash -c "'$bashRoot/infrastructure/run_mapreduce.sh' '$bashRoot' '$bashData' exp_combiner"
-    bash -c "'$bashRoot/infrastructure/run_mapreduce.sh' '$bashRoot' '$bashData' exp_reducers"
-    check
+    step "5/5 Eksperymenty (Engine: $Engine)"
+    if ($Engine -eq "spark" -or $Engine -eq "pyspark") {
+        & "$ROOT\infrastructure\run_experiments_pyspark.ps1" -ProjectDir $ROOT -DataDir $DATA
+        check
+    } else {
+        $bashRoot = '/mnt/' + $ROOT[0].ToString().ToLower() + '/' + $ROOT.Substring(3) -replace '\\', '/'
+        $bashData = '/mnt/' + $DATA[0].ToString().ToLower() + '/' + $DATA.Substring(3) -replace '\\', '/'
+        bash -c "'$bashRoot/infrastructure/run_mapreduce.sh' '$bashRoot' '$bashData' exp_combiner"
+        bash -c "'$bashRoot/infrastructure/run_mapreduce.sh' '$bashRoot' '$bashData' exp_reducers"
+        check
+    }
 } else {
     warn "5/5 Pomijam eksperymenty (-SkipExperiments)"
 }

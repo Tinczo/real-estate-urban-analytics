@@ -87,12 +87,22 @@ run_e1_5() {
   spark_submit "e1_5" "--t1_1 $HDFS_T1_1 --t1_5 $HDFS_T1_5"
 }
 
-run_e1_2() {
-  hdfs_rm "$HDFS_T1_2"
-  spark_submit "e1_2" "--osm_csv $HDFS_OSM_CSV --t1_2 $HDFS_T1_2"
+prepare_osm() {
+  if docker exec "$MASTER_CONTAINER" bash -c "hdfs dfs -test -d $HDFS_OSM_CSV" 2>/dev/null; then
+    info "==> Dane OSM CSV juz sa na HDFS ($HDFS_OSM_CSV) - pomijam konwersje."
+  else
+    info "==> Konwersja OSM Parquet -> CSV (PySpark)..."
+    docker cp "$PROJECT_DIR/scripts/processing/osm_to_csv.py" spark:/tmp/osm_to_csv.py
+    docker exec spark bash -c "
+      /usr/local/spark/bin/spark-submit \
+        --master yarn \
+        --deploy-mode client \
+        /tmp/osm_to_csv.py
+    "
+  fi
 }
 
-run_e1_3() {
+prepare_geocoding() {
   if docker exec "$MASTER_CONTAINER" bash -c "hdfs dfs -test -d $HDFS_RE_GEOCODED" 2>/dev/null; then
     info "==> Dane geocodowane juz sa na HDFS ($HDFS_RE_GEOCODED) - pomijam geocoding i upload."
   else
@@ -109,7 +119,16 @@ run_e1_3() {
     done
     docker exec "$MASTER_CONTAINER" bash -c "hdfs dfs -setrep -R 3 $HDFS_RE_GEOCODED" || true
   fi
-  
+}
+
+run_e1_2() {
+  prepare_osm
+  hdfs_rm "$HDFS_T1_2"
+  spark_submit "e1_2" "--osm_csv $HDFS_OSM_CSV --t1_2 $HDFS_T1_2"
+}
+
+run_e1_3() {
+  prepare_geocoding
   hdfs_rm "$HDFS_T1_3"
   spark_submit "e1_3" "--re_geocoded $HDFS_RE_GEOCODED --t1_3 $HDFS_T1_3"
 }
@@ -124,6 +143,15 @@ run_e3() {
   spark_submit "e3" "--t2 $HDFS_T2 --t3 $HDFS_T3"
 }
 
+run_prod() {
+  docker exec "$MASTER_CONTAINER" bash -c "hdfs dfs -test -e $HDFS_GTFS/stop_times.txt" \
+    || error "Brak danych GTFS na HDFS ($HDFS_GTFS/stop_times.txt). Uruchom start.sh"
+  prepare_osm
+  prepare_geocoding
+  hdfs_rm "$HDFS_T3"
+  spark_submit "prod" "--stop_times $HDFS_GTFS/stop_times.txt --gtfs_cache $HDFS_GTFS --osm_csv $HDFS_OSM_CSV --re_geocoded $HDFS_RE_GEOCODED --t3 $HDFS_T3"
+}
+
 # ── Dispatch ──────────────────────────────────────────────────────────────────
 
 info "Uruchamianie: $JOB_FLAG"
@@ -135,6 +163,7 @@ case "$JOB_FLAG" in
   e1_3) run_timed "E1.3" run_e1_3 ;;
   e2)   run_timed "E2"   run_e2   ;;
   e3)   run_timed "E3"   run_e3   ;;
+  prod) run_timed "PROD" run_prod ;;
   all)
     run_timed "E1.1" run_e1_1
     run_timed "E1.5" run_e1_5
@@ -144,7 +173,7 @@ case "$JOB_FLAG" in
     run_timed "E3"   run_e3
     ;;
   *)
-    error "Nieznana flaga: '$JOB_FLAG'. Dostepne: e1_1, e1_5, e1_2, e1_3, e2, e3, all"
+    error "Nieznana flaga: '$JOB_FLAG'. Dostepne: e1_1, e1_5, e1_2, e1_3, e2, e3, all, prod"
     ;;
 esac
 

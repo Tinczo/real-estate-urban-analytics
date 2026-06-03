@@ -28,37 +28,38 @@ public class E3Reducer extends Reducer<Text, IndicatorValues, Text, Text> {
 
         long n = 0;
 
-        // Sumy dla zmiennych cenowych (Y): cena_m2, cena_cal, powierzchnia
-        double sumCenaM2 = 0, sumCenaCal = 0, sumPow = 0;
-        double sumCenaM2_2 = 0, sumCenaCal_2 = 0, sumPow_2 = 0;
+        double[] meanX = new double[6];
+        double[] M2_X = new double[6];
 
-        // Sumy dla wskaźników (X): 6 wskaźników
-        double[] sumX    = new double[6];
-        double[] sumX2   = new double[6];
-        double[] sumXY_m2  = new double[6];
-        double[] sumXY_cal = new double[6];
-        double[] sumXY_pow = new double[6];
+        double[] meanY = new double[3];
+        double[] M2_Y = new double[3];
+
+        double[][] covXY = new double[6][3];
 
         for (IndicatorValues v : values) {
             n++;
-            double cM2  = v.cenaZaM2;
-            double cCal = v.cenaCalkowita;
-            double pow  = v.powierzchnia;
+            double[] y = { v.cenaZaM2, v.cenaCalkowita, v.powierzchnia };
+            double[] x = { v.wskPrzep, v.indHandlu, v.indGastro,
+                           v.indRekr,  v.indEduk,   v.wspHalas };
 
-            sumCenaM2   += cM2;  sumCenaM2_2  += cM2 * cM2;
-            sumCenaCal  += cCal; sumCenaCal_2 += cCal * cCal;
-            sumPow      += pow;  sumPow_2     += pow * pow;
+            double[] dx = new double[6];
+            for (int i = 0; i < 6; i++) {
+                dx[i] = x[i] - meanX[i];
+                meanX[i] += dx[i] / n;
+                M2_X[i] += dx[i] * (x[i] - meanX[i]);
+            }
 
-            double[] xs = { v.wskPrzep, v.indHandlu, v.indGastro,
-                             v.indRekr,  v.indEduk,   v.wspHalas };
+            double[] dy = new double[3];
+            for (int j = 0; j < 3; j++) {
+                dy[j] = y[j] - meanY[j];
+                meanY[j] += dy[j] / n;
+                M2_Y[j] += dy[j] * (y[j] - meanY[j]);
+            }
 
             for (int i = 0; i < 6; i++) {
-                double x = xs[i];
-                sumX[i]      += x;
-                sumX2[i]     += x * x;
-                sumXY_m2[i]  += x * cM2;
-                sumXY_cal[i] += x * cCal;
-                sumXY_pow[i] += x * pow;
+                for (int j = 0; j < 3; j++) {
+                    covXY[i][j] += dx[i] * (y[j] - meanY[j]);
+                }
             }
         }
 
@@ -68,9 +69,13 @@ public class E3Reducer extends Reducer<Text, IndicatorValues, Text, Text> {
         context.getCounter("E3", "OFFERS_PER_CITY_TOTAL").increment(n);
 
         for (int i = 0; i < 6; i++) {
-            double rM2  = pearson(n, sumX[i], sumCenaM2,  sumX2[i], sumCenaM2_2,  sumXY_m2[i]);
-            double rCal = pearson(n, sumX[i], sumCenaCal, sumX2[i], sumCenaCal_2, sumXY_cal[i]);
-            double rPow = pearson(n, sumX[i], sumPow,     sumX2[i], sumPow_2,     sumXY_pow[i]);
+            double rM2 = 0.0, rCal = 0.0, rPow = 0.0;
+            
+            if (M2_X[i] > 0) {
+                if (M2_Y[0] > 0) rM2 = covXY[i][0] / Math.sqrt(M2_X[i] * M2_Y[0]);
+                if (M2_Y[1] > 0) rCal = covXY[i][1] / Math.sqrt(M2_X[i] * M2_Y[1]);
+                if (M2_Y[2] > 0) rPow = covXY[i][2] / Math.sqrt(M2_X[i] * M2_Y[2]);
+            }
 
             outKey.set(miasto.toString());
             outVal.set(String.join(",",
@@ -81,19 +86,6 @@ public class E3Reducer extends Reducer<Text, IndicatorValues, Text, Text> {
             ));
             context.write(outKey, outVal);
         }
-    }
-
-    /**
-     * Korelacja Pearsona ze skumulowanych sum (numerycznie stabilna).
-     * r = (n·ΣXY − ΣX·ΣY) / sqrt((n·ΣX² − (ΣX)²) · (n·ΣY² − (ΣY)²))
-     */
-    private static double pearson(long n, double sumX, double sumY,
-                                   double sumX2, double sumY2, double sumXY) {
-        double num = n * sumXY - sumX * sumY;
-        double denX = n * sumX2 - sumX * sumX;
-        double denY = n * sumY2 - sumY * sumY;
-        if (denX <= 0 || denY <= 0) return 0.0;
-        return num / Math.sqrt(denX * denY);
     }
 
     private static String fmt(double v) {

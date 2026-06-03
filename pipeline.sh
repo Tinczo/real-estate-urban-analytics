@@ -1,8 +1,8 @@
 #!/bin/bash
 # pipeline.sh - master skrypt: stawia infrastrukture, przetwarza dane, uruchamia potok MapReduce
-# Uzycie: ./pipeline.sh [--skip-infrastructure] [--skip-acquisition] [--skip-processing] [--skip-mapreduce] [--skip-experiments]
+# Uzycie: ./pipeline.sh [--skip-infrastructure] [--skip-acquisition] [--skip-processing] [--skip-mapreduce] [--skip-experiments] [--engine=mapreduce|spark]
 # Przyklad: ./pipeline.sh
-# Przyklad (tylko przetwarzanie): ./pipeline.sh --skip-infrastructure --skip-acquisition
+# Przyklad (tylko przetwarzanie): ./pipeline.sh --skip-infrastructure --skip-acquisition --engine=spark
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -15,6 +15,8 @@ SKIP_PROCESSING=0
 SKIP_MAPREDUCE=0
 SKIP_EXPERIMENTS=0
 
+ENGINE="mapreduce"
+
 for arg in "$@"; do
     case "$arg" in
         --skip-infrastructure) SKIP_INFRASTRUCTURE=1 ;;
@@ -22,6 +24,7 @@ for arg in "$@"; do
         --skip-processing)     SKIP_PROCESSING=1 ;;
         --skip-mapreduce)      SKIP_MAPREDUCE=1 ;;
         --skip-experiments)    SKIP_EXPERIMENTS=1 ;;
+        --engine=*)            ENGINE="${arg#*=}" ;;
         *) echo "[ERROR] Nieznany argument: $arg"; exit 1 ;;
     esac
 done
@@ -67,10 +70,10 @@ else
     warn "3/5 Pomijam przetwarzanie (--skip-processing)"
 fi
 
-# ── 4. MapReduce pipeline ────────────────────────────────────────────────────
+# ── 4. Pipeline ──────────────────────────────────────────────────────────────
 
 if [ $SKIP_MAPREDUCE -eq 0 ]; then
-    step "4/5 MapReduce pipeline (E1.1 -> E1.5 -> E1.2 -> E1.3 -> E2 -> E3)"
+    step "4/5 Pipeline (Engine: $ENGINE)"
 
     # Upload brakujacych danych na HDFS
     for hdfsDir in "gtfs" "osm" "real_estate_geocoded"; do
@@ -105,29 +108,39 @@ if [ $SKIP_MAPREDUCE -eq 0 ]; then
         fi
     done
 
-    # JAR
-    JAR=$(find "$ROOT/mapreduce/target" -maxdepth 1 -name "mapreduce-*-SNAPSHOT.jar" ! -name "original-*" 2>/dev/null | head -n 1 || true)
-    if [ -z "$JAR" ]; then
-        info "Buduje JAR (mvn clean package)..."
-        mvn -f "$ROOT/mapreduce/pom.xml" clean package -DskipTests -q
+    if [ "$ENGINE" = "spark" ] || [ "$ENGINE" = "pyspark" ]; then
+        bash "$ROOT/infrastructure/run_pyspark.sh" "$ROOT" "$DATA" all
+    elif [ "$ENGINE" = "spark-prod" ]; then
+        bash "$ROOT/infrastructure/run_pyspark.sh" "$ROOT" "$DATA" prod
+    else
+        # JAR
         JAR=$(find "$ROOT/mapreduce/target" -maxdepth 1 -name "mapreduce-*-SNAPSHOT.jar" ! -name "original-*" 2>/dev/null | head -n 1 || true)
-    fi
-    if [ -n "$JAR" ]; then
-        docker cp "$JAR" "master:/data/hadoop/mapreduce-1.0-SNAPSHOT.jar" >/dev/null 2>&1 || true
-        info "JAR skopiowany na mastera."
-    fi
+        if [ -z "$JAR" ]; then
+            info "Buduje JAR (mvn clean package)..."
+            mvn -f "$ROOT/mapreduce/pom.xml" clean package -DskipTests -q
+            JAR=$(find "$ROOT/mapreduce/target" -maxdepth 1 -name "mapreduce-*-SNAPSHOT.jar" ! -name "original-*" 2>/dev/null | head -n 1 || true)
+        fi
+        if [ -n "$JAR" ]; then
+            docker cp "$JAR" "master:/data/hadoop/mapreduce-1.0-SNAPSHOT.jar" >/dev/null 2>&1 || true
+            info "JAR skopiowany na mastera."
+        fi
 
-    bash "$ROOT/infrastructure/run_mapreduce.sh" "$ROOT" "$DATA" all
+        bash "$ROOT/infrastructure/run_mapreduce.sh" "$ROOT" "$DATA" all
+    fi
 else
-    warn "4/5 Pomijam MapReduce (--skip-mapreduce)"
+    warn "4/5 Pomijam Pipeline (--skip-mapreduce)"
 fi
 
 # ── 5. Eksperymenty ──────────────────────────────────────────────────────────
 
 if [ $SKIP_EXPERIMENTS -eq 0 ]; then
-    step "5/5 Eksperymenty (combiner, reducery)"
-    bash "$ROOT/infrastructure/run_mapreduce.sh" "$ROOT" "$DATA" exp_combiner
-    bash "$ROOT/infrastructure/run_mapreduce.sh" "$ROOT" "$DATA" exp_reducers
+    step "5/5 Eksperymenty (Engine: $ENGINE)"
+    if [ "$ENGINE" = "spark" ] || [ "$ENGINE" = "pyspark" ] || [ "$ENGINE" = "spark-prod" ]; then
+        bash "$ROOT/infrastructure/run_experiments_pyspark.sh" "$ROOT" "$DATA"
+    else
+        bash "$ROOT/infrastructure/run_mapreduce.sh" "$ROOT" "$DATA" exp_combiner
+        bash "$ROOT/infrastructure/run_mapreduce.sh" "$ROOT" "$DATA" exp_reducers
+    fi
 else
     warn "5/5 Pomijam eksperymenty (--skip-experiments)"
 fi
