@@ -2,3 +2,7 @@ data/
 logs/
 venv/
 scripts/__pycache__
+terraform/terraform.tfvars
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/terraform.tfstate*

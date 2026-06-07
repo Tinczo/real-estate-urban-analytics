@@ -1,0 +1,11 @@
+# Skopiuj ten plik jako terraform.tfvars i uzupelnij wartosci
+# UWAGA: terraform.tfvars jest w .gitignore — nie commituj tokenu!
+
+databricks_host  = "https://adb-XXXXXXXXXXXXXXXX.XX.azuredatabricks.net"
+databricks_token = "dapi..."
+
+# Opcjonalne — domyslne wartosci sa ok dla Free Edition
+# cluster_node_type = "Standard_DS3_v2"
+# spark_version     = "13.3.x-scala2.12"
+# num_workers       = 2
+# pipeline_base_path = "/FileStore/duze-dane"
