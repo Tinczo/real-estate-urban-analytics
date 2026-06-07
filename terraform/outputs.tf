@@ -1,8 +1,3 @@
-output "cluster_id" {
-  description = "ID klastra Databricks"
-  value       = databricks_cluster.pipeline_cluster.id
-}
-
 output "pipeline_job_id" {
   description = "ID joba pełnego potoku"
   value       = databricks_job.pipeline_full.id

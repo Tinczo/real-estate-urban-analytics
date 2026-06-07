@@ -1,35 +1,32 @@
 locals {
-  base      = var.pipeline_base_path
-  src       = "/FileStore/duze-dane/src/spark_pipeline.py"
-  t1_1      = "${local.base}/t1_1"
-  t1_5      = "${local.base}/t1_5"
-  t1_2      = "${local.base}/t1_2"
-  t1_3      = "${local.base}/t1_3"
-  t2        = "${local.base}/t2"
-  t3        = "${local.base}/t3"
-  gtfs      = "${local.base}/gtfs"
-  osm_csv   = "${local.base}/osm_csv"
-  re_geo    = "${local.base}/real_estate_geocoded"
+  base    = var.pipeline_base_path
+  src     = databricks_workspace_file.spark_pipeline.path
+  t1_1    = "${local.base}/t1_1"
+  t1_5    = "${local.base}/t1_5"
+  t1_2    = "${local.base}/t1_2"
+  t1_3    = "${local.base}/t1_3"
+  t2      = "${local.base}/t2"
+  t3      = "${local.base}/t3"
+  gtfs    = "${local.base}/gtfs"
+  osm_csv = "${local.base}/osm_csv"
+  re_geo  = "${local.base}/real_estate_geocoded"
 }
 
-# Job uruchamiający pełny potok jako sekwencję tasków
+# Job uruchamiający pełny potok jako sekwencję tasków (serverless)
 resource "databricks_job" "pipeline_full" {
   name = "duze-dane-pipeline-full"
 
-  # Współdzielony klaster (job_cluster zamiast existing_cluster_id = droższy Free tier)
-  job_cluster {
-    job_cluster_key = "pipeline"
-    new_cluster {
-      spark_version  = var.spark_version
-      node_type_id   = var.cluster_node_type
-      num_workers    = var.num_workers
+  # Wymagane dla serverless Python tasks
+  environment {
+    environment_key = "default"
+    spec {
+      client = "1"
     }
   }
 
-  # E1.1 — GTFS extract + broadcast join
   task {
     task_key        = "e1_1"
-    job_cluster_key = "pipeline"
+    environment_key = "default"
     spark_python_task {
       python_file = local.src
       parameters  = [
@@ -41,10 +38,9 @@ resource "databricks_job" "pipeline_full" {
     }
   }
 
-  # E1.5 — agregacja GTFS
   task {
     task_key        = "e1_5"
-    job_cluster_key = "pipeline"
+    environment_key = "default"
     spark_python_task {
       python_file = local.src
       parameters  = [
@@ -56,10 +52,9 @@ resource "databricks_job" "pipeline_full" {
     depends_on { task_key = "e1_1" }
   }
 
-  # E1.2 — OSM CSV extract
   task {
     task_key        = "e1_2"
-    job_cluster_key = "pipeline"
+    environment_key = "default"
     spark_python_task {
       python_file = local.src
       parameters  = [
@@ -70,10 +65,9 @@ resource "databricks_job" "pipeline_full" {
     }
   }
 
-  # E1.3 — normalizacja nieruchomości
   task {
     task_key        = "e1_3"
-    job_cluster_key = "pipeline"
+    environment_key = "default"
     spark_python_task {
       python_file = local.src
       parameters  = [
@@ -84,10 +78,9 @@ resource "databricks_job" "pipeline_full" {
     }
   }
 
-  # E2 — wskaźniki per nieruchomość (czeka na E1.5, E1.2, E1.3)
   task {
     task_key        = "e2"
-    job_cluster_key = "pipeline"
+    environment_key = "default"
     spark_python_task {
       python_file = local.src
       parameters  = [
@@ -95,7 +88,7 @@ resource "databricks_job" "pipeline_full" {
         "--t1_5", local.t1_5,
         "--t1_2", local.t1_2,
         "--t1_3", local.t1_3,
-        "--t2",   local.t2
+        "--t2", local.t2
       ]
     }
     depends_on { task_key = "e1_5" }
@@ -103,10 +96,9 @@ resource "databricks_job" "pipeline_full" {
     depends_on { task_key = "e1_3" }
   }
 
-  # E3 — korelacja Pearsona
   task {
     task_key        = "e3"
-    job_cluster_key = "pipeline"
+    environment_key = "default"
     spark_python_task {
       python_file = local.src
       parameters  = [
@@ -119,23 +111,20 @@ resource "databricks_job" "pipeline_full" {
   }
 }
 
-# Job do eksperymentów (broadcast vs sort-merge, liczba partycji)
+# Job do eksperymentów
 resource "databricks_job" "experiments" {
   name = "duze-dane-experiments"
 
-  job_cluster {
-    job_cluster_key = "exp"
-    new_cluster {
-      spark_version = var.spark_version
-      node_type_id  = var.cluster_node_type
-      num_workers   = var.num_workers
+  environment {
+    environment_key = "default"
+    spec {
+      client = "1"
     }
   }
 
-  # Eksperyment A: Broadcast ON
   task {
     task_key        = "exp_broadcast_on"
-    job_cluster_key = "exp"
+    environment_key = "default"
     spark_python_task {
       python_file = local.src
       parameters  = [
@@ -147,10 +136,9 @@ resource "databricks_job" "experiments" {
     }
   }
 
-  # Eksperyment A: Broadcast OFF
   task {
     task_key        = "exp_broadcast_off"
-    job_cluster_key = "exp"
+    environment_key = "default"
     spark_python_task {
       python_file = local.src
       parameters  = [
@@ -163,10 +151,9 @@ resource "databricks_job" "experiments" {
     }
   }
 
-  # Eksperyment B: partycje = 1
   task {
     task_key        = "exp_partitions_1"
-    job_cluster_key = "exp"
+    environment_key = "default"
     spark_python_task {
       python_file = local.src
       parameters  = [
@@ -178,10 +165,9 @@ resource "databricks_job" "experiments" {
     }
   }
 
-  # Eksperyment B: partycje = 10
   task {
     task_key        = "exp_partitions_10"
-    job_cluster_key = "exp"
+    environment_key = "default"
     spark_python_task {
       python_file = local.src
       parameters  = [
@@ -193,10 +179,9 @@ resource "databricks_job" "experiments" {
     }
   }
 
-  # Eksperyment B: partycje = 50
   task {
     task_key        = "exp_partitions_50"
-    job_cluster_key = "exp"
+    environment_key = "default"
     spark_python_task {
       python_file = local.src
       parameters  = [
