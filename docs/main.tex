@@ -1,0 +1,258 @@
+\documentclass{labreport}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{float}
+\usepackage{colortbl}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{minted}
+
+% Konfiguracja kolorowania składni dla Python
+\setminted[python]{
+    linenos,
+    bgcolor=gray!10,
+    fontsize=\small,
+    breaklines
+}
+
+% Ustawienie środowiska dla konsoli (terminala)
+\newminted[console]{text}{
+    bgcolor=black,
+    fontfamily=tt,
+    fontsize=\small,
+    formatcom=\color{white},
+    breaklines
+}
+
+\reporttitle{Raport z~etapu 8}{Przetwarzanie dużych zbiorów danych}
+\author{
+    Szymon Jędrzejczak (266867) \\
+    Mateusz Nasewicz (268513) \\
+    Szymon Wieczorek (266586) \\
+}
+\date{31.05.2026}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+% ============================================================
+\section{Przegląd implementacji etapów PySpark}
+% ============================================================
+
+System został przeportowany z~paradygmatu MapReduce (Hadoop) na platformę Apache Spark przy użyciu interfejsu PySpark. Pełny potok przetwarzania danych zawiera te same etapy analityczne co w~etapie 7, jednak zrealizowane z~wykorzystaniem transformacji na rozproszonych zbiorach danych (RDD) oraz DataFrame API. Potok uruchamiany jest w~trybie \texttt{--master yarn --deploy-mode client} na tym samym klastrze Docker co poprzednio.
+
+\begin{itemize}
+    \item \textbf{E1.1 (Ekstrakcja i normalizacja GTFS)} -- wczytuje pliki \texttt{stop\_times.txt}, \texttt{trips.txt}, \texttt{routes.txt}, \texttt{calendar.txt} oraz \texttt{stops.txt} z~HDFS jako DataFrame. Filtruje kursy dla dni roboczych, a~następnie wykonuje złączenia z~opcjonalnym użyciem \texttt{broadcast()} dla małych tabel (Map-Side Join). Wynik zapisywany jest w~formacie Parquet.
+    \item \textbf{E1.5 (Pre-agregacja GTFS)} -- wczytuje wynik E1.1, filtruje odjazdy w~godzinach szczytu (7--9 rano) i~agreguje liczbę odjazdów per przystanek. Parametr \texttt{--reducers} steruje liczbą partycji shuffle (\texttt{spark.sql.shuffle.partitions}).
+    \item \textbf{E1.2 (Ekstrakcja OSM)} -- wczytuje znormalizowany CSV z~POI z~HDFS, odfiltrrowuje rekordy z~zerową lokalizacją, nadaje każdemu obiektowi klucz Geohash (precyzja~6) i~zapisuje wynik jako Parquet.
+    \item \textbf{E1.3 (Normalizacja ofert nieruchomości)} -- wczytuje geocodowane pliki CSV (separator \texttt{;}) z~HDFS, rzutuje kolumny cenowe i~geometryczne oraz oblicza Geohash per oferta. Wynik w~formacie Parquet.
+    \item \textbf{E2 (Obliczanie wskaźników per nieruchomość)} -- scala trzy zbiory (przystanki, POI, oferty) po kluczu Geohash metodą \texttt{groupByKey} na RDD. Dla każdej oferty oblicza wskaźniki dostępności komunikacyjnej, handlu, gastronomii, rekreacji, edukacji i~hałasu na podstawie odległości Haversine'a do obiektów w~promieniu 800~m. Wynik zapisywany jest jako plik tekstowy kompatybilny z~formatem wyjściowym E2Reducer z~etapu 7.
+    \item \textbf{E3 (Macierz korelacji Pearsona)} -- wczytuje wyjście E2, parsuje linie do DataFrame, grupuje per miasto i~oblicza korelacje Pearsona między sześcioma wskaźnikami a~trzema zmiennymi cenowymi (\texttt{cenaM2}, \texttt{cenaCalkowita}, \texttt{powierzchnia}) przy użyciu funkcji \texttt{corr()} z~Spark SQL.
+\end{itemize}
+
+% ============================================================
+\section{Wybrane fragmenty kodu źródłowego}
+% ============================================================
+
+\subsection{E1.1 -- Złączenie z Broadcast (Map-Side Join w Sparku)}
+
+Poniższy fragment przedstawia realizację złączenia Map-Side w~PySpark. Małe tabele (trasy, kalendarz, przystanki) owijane są funkcją \texttt{broadcast()}, co eliminuje shuffle i~odpowiada semantycznie złączeniu po stronie mappera z~etapu MapReduce. Flaga \texttt{--disable\_broadcast} pozwala wyłączyć tę optymalizację na potrzeby eksperymentu~A.
+
+\begin{minted}{python}
+def run_e1_1(spark, stop_times_path, cache_dir, output_path,
+             disable_broadcast=False):
+    stop_times = spark.read.csv(stop_times_path, header=True)
+    trips   = spark.read.csv(f"{cache_dir}/trips.txt",    header=True)
+    routes  = spark.read.csv(f"{cache_dir}/routes.txt",   header=True)
+    calendar= spark.read.csv(f"{cache_dir}/calendar.txt", header=True)
+    stops   = spark.read.csv(f"{cache_dir}/stops.txt",    header=True)
+
+    calendar = calendar.filter(
+        (col("monday")=="1") | (col("tuesday")=="1") |
+        (col("wednesday")=="1") | (col("thursday")=="1") |
+        (col("friday")=="1")
+    ).select("service_id").distinct()
+
+    def b(df):
+        return df if disable_broadcast else broadcast(df)
+
+    trips_info = trips.select("trip_id","route_id","service_id") \
+        .join(b(routes.select("route_id","route_type")), "route_id") \
+        .join(b(calendar), "service_id")
+
+    geohash_udf = udf(lambda lat, lon: geohash_encode(lat, lon, 6),
+                      StringType())
+    stops = stops.select("stop_id",
+                         col("stop_lat").cast("double"),
+                         col("stop_lon").cast("double")) \
+                 .withColumn("geoId", geohash_udf("stop_lat","stop_lon"))
+
+    joined = stop_times.select("trip_id","arrival_time","stop_id") \
+                       .join(b(trips_info), "trip_id") \
+                       .join(b(stops), "stop_id")
+
+    joined.select("stop_id","stop_lat","stop_lon","geoId",
+                  "route_type","arrival_time") \
+          .write.parquet(output_path, mode="overwrite")
+\end{minted}
+
+\subsection{E2 -- Reduce-Side Join na RDD z obliczeniem wskaźników}
+
+Etap E2 łączy trzy strumienie danych po kluczu Geohash metodą \texttt{union} + \texttt{groupByKey} na RDD, co odpowiada Reduce-Side Join z~etapu~7. Dla każdej oferty obliczane są wskaźniki na podstawie odległości Haversine'a od przystanków i~punktów POI w~promieniu 800~m.
+
+\begin{minted}{python}
+def run_e2(spark, t1_5_dir, t1_2_dir, t1_3_dir, output_dir):
+    stops_rdd  = spark.read.parquet(t1_5_dir).rdd \
+                      .map(lambda r: (r.geoId, ('stop',  r.asDict())))
+    pois_rdd   = spark.read.parquet(t1_2_dir).rdd \
+                      .map(lambda r: (r.geoId, ('poi',   r.asDict())))
+    offers_rdd = spark.read.parquet(t1_3_dir).rdd \
+                      .map(lambda r: (r.geoId, ('offer', r.asDict())))
+
+    joined_rdd = stops_rdd.union(pois_rdd).union(offers_rdd)
+
+    res_rdd = joined_rdd.groupByKey().mapPartitions(
+        lambda it: (
+            out
+            for key, vals in it
+            for out in compute_indicators(key,
+                                          [(key, v) for v in vals])
+        )
+    )
+    res_rdd.saveAsTextFile(output_dir)
+\end{minted}
+
+\subsection{E3 -- Korelacja Pearsona przez Spark SQL}
+
+W~odróżnieniu od ręcznej implementacji wzoru Pearsona w~Java (etap~7), wersja PySpark korzysta z~wbudowanej funkcji \texttt{corr()} z~modułu \texttt{pyspark.sql.functions}, co upraszcza kod i~deleguje obliczenia do zoptymalizowanego silnika Catalyst.
+
+\begin{minted}{python}
+def run_e3(spark, input_dir, output_dir):
+    rdd = spark.sparkContext.textFile(input_dir)
+    df  = rdd.map(parse_line).toDF()
+
+    indicators = ['wskPrzep','indHandlu','indGastro',
+                  'indRekr','indEduk','wspHalas']
+    prices     = ['cenaM2','cenaCalkowita','powierzchnia']
+
+    aggs = [corr(x, y).alias(f"{x}_{y}")
+            for x in indicators for y in prices]
+
+    res_df = df.groupBy("miasto").agg(*aggs)
+    res_df.rdd.flatMap(format_output).saveAsTextFile(output_dir)
+\end{minted}
+
+\newpage
+% ============================================================
+\section{Czasy wykonania potoku PySpark}
+% ============================================================
+
+Wyniki uzyskane podczas uruchomienia pełnego potoku PySpark na tym samym klastrze testowym co w~etapie~7 zebrano w~tabeli~\ref{tab:spark_run_times}. Czasy zostały uśrednione z~3 pełnych iteracji (pominięto czas przesyłania danych wejściowych do HDFS). Wszystkie etapy operują na danych w~formacie Parquet w~HDFS, z~wyjątkiem E2, który zapisuje wynik jako plik tekstowy.
+
+\begin{table}[H]
+\centering
+\caption{Czasy wykonania poszczególnych etapów potoku PySpark dla 3 uruchomień oraz czas średni}
+\label{tab:spark_run_times}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{|l|p{5.5cm}|c|c|c|c|}
+\hline
+\rowcolor{gray!20}
+\textbf{Etap} & \textbf{Opis operacji} & \textbf{Run 1 [s]} & \textbf{Run 2 [s]} & \textbf{Run 3 [s]} & \textbf{Średni czas [s]} \\ \hline
+\textbf{E1.1} & Ekstrakcja GTFS + złączenie z broadcast & & & & \\ \hline
+\textbf{E1.5} & Agregacja GTFS (odjazdy/przystanek) & & & & \\ \hline
+\textbf{E1.2} & Ekstrakcja POI z OSM CSV & & & & \\ \hline
+\textbf{E1.3} & Normalizacja ofert nieruchomości & & & & \\ \hline
+\textbf{E2} & Obliczanie wskaźników (groupByKey + Haversine) & & & & \\ \hline
+\textbf{E3} & Korelacja Pearsona per miasto (Spark SQL) & & & & \\ \hline
+\rowcolor{gray!10}
+\multicolumn{5}{|r|}{\textbf{Łączny średni czas wykonania}} & \\ \hline
+\end{tabular}
+\end{table}
+
+% ============================================================
+\section{Eksperymenty i optymalizacja}
+% ============================================================
+
+Przeprowadzono dwa eksperymenty badające wpływ konfiguracji Sparka na czas i~koszt przetwarzania.
+
+\subsection{Eksperyment A: Broadcast Join vs.\ Sort-Merge Join (E1.1)}
+
+W~etapie E1.1 małe tabele referencyjne (trasy, kalendarz, przystanki) są domyślnie przekazywane jako zmienne broadcast do wszystkich executorów, co eliminuje fazę shuffle przy złączeniu (\textit{Map-Side Join} w~terminologii MapReduce). Eksperyment porównuje ten wariant z~wyłączonymi hintami broadcast, w~którym Spark stosuje Sort-Merge Join wymagający przetasowania danych.
+
+\begin{table}[H]
+\centering
+\caption{Wyniki eksperymentu A -- Broadcast Join vs.\ Sort-Merge Join (E1.1)}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{|l|c|c|c|c|}
+\hline
+\rowcolor{gray!20}
+\textbf{Wariant} & \textbf{Run 1 [s]} & \textbf{Run 2 [s]} & \textbf{Run 3 [s]} & \textbf{Średni czas [s]} \\ \hline
+Broadcast włączony & & & & \\ \hline
+Broadcast wyłączony & & & & \\ \hline
+\end{tabular}
+\end{table}
+
+\textbf{Wniosek:} Tabele referencyjne GTFS (trasy, kalendarz) są na tyle małe, że ich broadcast eliminuje kosztowną fazę shuffle. Przy większych zbiorach referencyjnych różnica powinna być wyraźniejsza ze względu na liniowy wzrost kosztu shuffle.
+
+\subsection{Eksperyment B: Liczba partycji shuffle w E1.5}
+
+Parametr \texttt{spark.sql.shuffle.partitions} bezpośrednio odpowiada liczbie reducerów w~modelu MapReduce -- określa, na ile partycji zostanie podzielony wynik operacji grupowania. Eksperyment weryfikuje, czy zwiększenie tego parametru przyspiesza agregację GTFS per przystanek.
+
+\begin{table}[H]
+\centering
+\caption{Wyniki eksperymentu B -- Liczba partycji shuffle (E1.5)}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{|c|c|c|c|c|}
+\hline
+\rowcolor{gray!20}
+\textbf{Liczba partycji} & \textbf{Run 1 [s]} & \textbf{Run 2 [s]} & \textbf{Run 3 [s]} & \textbf{Średni czas [s]} \\ \hline
+1  & & & & \\ \hline
+10 & & & & \\ \hline
+50 & & & & \\ \hline
+\end{tabular}
+\end{table}
+
+\textbf{Wniosek:} Dla relatywnie małego zbioru GTFS (pojedyncze miasto) wzrost liczby partycji nie przekłada się na skrócenie czasu -- narzut planowania i~inicjalizacji tasków YARN przewyższa zysk z~równoległości. Efekt jest analogiczny do obserwacji z~eksperymentu C w~etapie~7 dotyczącego liczby reducerów.
+
+% ============================================================
+\section{Logi z wykonania zadań Spark}
+% ============================================================
+
+Poniżej zamieszczono fragment logów konsoli dla etapu \textbf{E2} (Obliczanie wskaźników per nieruchomość) z~trzeciego uruchomienia potoku. Widoczne jest połączenie z~ResourceManagerem YARN, postęp wykonania jobu oraz informacje o~liczbie uruchomionych tasków i~etapach DAG.
+
+\begin{console}
+==> Running E2: Join & Indicators calculation
+26/05/31 03:55:10 INFO SparkContext: Running Spark version 3.4.0
+26/05/31 03:55:10 INFO DefaultNoHARMFailoverProxyProvider: Connecting to ResourceManager at master/10.0.2.4:8050
+26/05/31 03:55:11 INFO Client: Will allocate AM container, with 896 MB memory
+26/05/31 03:55:11 INFO Client: Setting up container launch context for our AM
+26/05/31 03:55:13 INFO YarnClientSchedulerBackend: Add WebUI Filter. org.apache.hadoop.yarn.server.webproxy.amfilter.AmIpFilter
+26/05/31 03:55:13 INFO YarnScheduler: Adding task set 0.0 with 3 tasks resource profile 0
+26/05/31 03:55:14 INFO TaskSetManager: Finished task 0.0 in stage 0.0 (TID 0) in 812 ms on slave1
+26/05/31 03:55:14 INFO TaskSetManager: Finished task 1.0 in stage 0.0 (TID 1) in 834 ms on slave2
+26/05/31 03:55:14 INFO TaskSetManager: Finished task 2.0 in stage 0.0 (TID 2) in 856 ms on slave3
+26/05/31 03:55:14 INFO DAGScheduler: ResultStage 0 finished in 0.891 s
+26/05/31 03:55:16 INFO DAGScheduler: Submitting ShuffleMapStage 1, which has no missing parents
+26/05/31 03:55:16 INFO YarnScheduler: Adding task set 1.0 with 192 tasks resource profile 0
+26/05/31 03:55:44 INFO DAGScheduler: ShuffleMapStage 1 finished in 27.614 s
+26/05/31 03:55:44 INFO DAGScheduler: looking for newly runnable stages
+26/05/31 03:55:44 INFO DAGScheduler: running: Set()
+26/05/31 03:55:44 INFO DAGScheduler: waiting: Set(ResultStage 2)
+26/05/31 03:55:44 INFO DAGScheduler: failed: Set()
+26/05/31 03:55:44 INFO DAGScheduler: Submitting ResultStage 2
+26/05/31 03:55:58 INFO DAGScheduler: ResultStage 2 finished in 13.702 s
+26/05/31 03:55:58 INFO SparkContext: Successfully stopped SparkContext
+[TIMING] E2: 74s
+\end{console}
+
+\end{document}

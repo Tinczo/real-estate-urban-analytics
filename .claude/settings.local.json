@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"c:\\\\Studia\\\\SEM III\\\\Wolf\\\\Projekt\\\\duze-dane\" -Force)",
+      "Bash(Select-Object Name, Mode)",
+      "WebSearch",
+      "WebFetch(domain:davidmoten.github.io)",
+      "Bash(powershell -File run_experiments.ps1 -Job all)"
+    ]
+  }
+}
