@@ -10,7 +10,7 @@ variable "databricks_token" {
 }
 
 variable "pipeline_base_path" {
-  description = "Ścieżka bazowa w DBFS dla danych wejściowych"
+  description = "Ścieżka bazowa w Unity Catalog Volume"
   type        = string
-  default     = "/FileStore/duze-dane"
+  default     = "/Volumes/workspace/duze_dane/data"
 }

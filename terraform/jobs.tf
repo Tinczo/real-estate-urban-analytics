@@ -1,6 +1,6 @@
 locals {
   base    = var.pipeline_base_path
-  src     = databricks_workspace_file.spark_pipeline.path
+  src     = "/Workspace/duze-dane/src/spark_pipeline.py"
   t1_1    = "${local.base}/t1_1"
   t1_5    = "${local.base}/t1_5"
   t1_2    = "${local.base}/t1_2"
@@ -12,15 +12,13 @@ locals {
   re_geo  = "${local.base}/real_estate_geocoded"
 }
 
-# Job uruchamiający pełny potok jako sekwencję tasków (serverless)
 resource "databricks_job" "pipeline_full" {
   name = "duze-dane-pipeline-full"
 
-  # Wymagane dla serverless Python tasks
   environment {
     environment_key = "default"
     spec {
-      client = "1"
+      client = "2"
     }
   }
 
@@ -53,16 +51,29 @@ resource "databricks_job" "pipeline_full" {
   }
 
   task {
+    task_key        = "osm_preprocess"
+    environment_key = "default"
+    spark_python_task {
+      python_file = "/Workspace/duze-dane/src/osm_to_csv.py"
+      parameters  = [
+        "--input",  "${local.base}/osm_csv",
+        "--output", "${local.base}/osm_csv_out"
+      ]
+    }
+  }
+
+  task {
     task_key        = "e1_2"
     environment_key = "default"
     spark_python_task {
       python_file = local.src
       parameters  = [
         "--stage", "e1_2",
-        "--osm_csv", local.osm_csv,
+        "--osm_csv", "${local.base}/osm_csv_out",
         "--t1_2", local.t1_2
       ]
     }
+    depends_on { task_key = "osm_preprocess" }
   }
 
   task {
@@ -111,14 +122,124 @@ resource "databricks_job" "pipeline_full" {
   }
 }
 
-# Job do eksperymentów
+resource "databricks_job" "pipeline_full_v2" {
+  name = "duze-dane-pipeline-v2"
+
+  environment {
+    environment_key = "default"
+    spec {
+      client = "2"
+    }
+  }
+
+  task {
+    task_key        = "e1_1"
+    environment_key = "default"
+    spark_python_task {
+      python_file = local.src
+      parameters  = [
+        "--stage", "e1_1",
+        "--stop_times", "${local.gtfs}/stop_times.txt",
+        "--gtfs_cache", local.gtfs,
+        "--t1_1", local.t1_1
+      ]
+    }
+  }
+
+  task {
+    task_key        = "e1_5"
+    environment_key = "default"
+    spark_python_task {
+      python_file = local.src
+      parameters  = [
+        "--stage", "e1_5",
+        "--t1_1", local.t1_1,
+        "--t1_5", local.t1_5
+      ]
+    }
+    depends_on { task_key = "e1_1" }
+  }
+
+  task {
+    task_key        = "osm_preprocess"
+    environment_key = "default"
+    spark_python_task {
+      python_file = "/Workspace/duze-dane/src/osm_to_csv.py"
+      parameters  = [
+        "--input",  "${local.base}/osm_csv",
+        "--output", "${local.base}/osm_csv_out"
+      ]
+    }
+  }
+
+  task {
+    task_key        = "e1_2"
+    environment_key = "default"
+    spark_python_task {
+      python_file = local.src
+      parameters  = [
+        "--stage", "e1_2",
+        "--osm_csv", "${local.base}/osm_csv_out",
+        "--t1_2", local.t1_2
+      ]
+    }
+    depends_on { task_key = "osm_preprocess" }
+    depends_on { task_key = "e1_5" }
+  }
+
+  task {
+    task_key        = "e1_3"
+    environment_key = "default"
+    spark_python_task {
+      python_file = local.src
+      parameters  = [
+        "--stage", "e1_3",
+        "--re_geocoded", local.re_geo,
+        "--t1_3", local.t1_3
+      ]
+    }
+    depends_on { task_key = "e1_5" }
+  }
+
+  task {
+    task_key        = "e2"
+    environment_key = "default"
+    spark_python_task {
+      python_file = local.src
+      parameters  = [
+        "--stage", "e2",
+        "--t1_5", local.t1_5,
+        "--t1_2", local.t1_2,
+        "--t1_3", local.t1_3,
+        "--t2", local.t2
+      ]
+    }
+    depends_on { task_key = "e1_2" }
+    depends_on { task_key = "e1_3" }
+  }
+
+  task {
+    task_key        = "e3"
+    environment_key = "default"
+    spark_python_task {
+      python_file = local.src
+      parameters  = [
+        "--stage", "e3",
+        "--t2", local.t2,
+        "--t3", local.t3
+      ]
+    }
+    depends_on { task_key = "e2" }
+  }
+}
+
 resource "databricks_job" "experiments" {
   name = "duze-dane-experiments"
 
   environment {
     environment_key = "default"
     spec {
-      client = "1"
+      client = "2"
     }
   }
 
@@ -191,5 +312,125 @@ resource "databricks_job" "experiments" {
         "--reducers", "50"
       ]
     }
+  }
+}
+
+# Part 1: osm_preprocess -> e1_1 -> e1_5 -> e1_2 -> e1_3
+resource "databricks_job" "pipeline_part1" {
+  name = "duze-dane-pipeline-part1"
+
+  environment {
+    environment_key = "default"
+    spec {
+      client = "2"
+    }
+  }
+
+  task {
+    task_key        = "osm_preprocess"
+    environment_key = "default"
+    spark_python_task {
+      python_file = "/Workspace/duze-dane/src/osm_to_csv.py"
+      parameters  = [
+        "--input",  "${local.base}/osm_csv",
+        "--output", "${local.base}/osm_csv_out"
+      ]
+    }
+  }
+
+  task {
+    task_key        = "e1_1"
+    environment_key = "default"
+    spark_python_task {
+      python_file = local.src
+      parameters  = [
+        "--stage", "e1_1",
+        "--stop_times", "${local.gtfs}/stop_times.txt",
+        "--gtfs_cache", local.gtfs,
+        "--t1_1", local.t1_1
+      ]
+    }
+  }
+
+  task {
+    task_key        = "e1_5"
+    environment_key = "default"
+    spark_python_task {
+      python_file = local.src
+      parameters  = [
+        "--stage", "e1_5",
+        "--t1_1", local.t1_1,
+        "--t1_5", local.t1_5
+      ]
+    }
+    depends_on { task_key = "e1_1" }
+  }
+
+  task {
+    task_key        = "e1_2"
+    environment_key = "default"
+    spark_python_task {
+      python_file = local.src
+      parameters  = [
+        "--stage", "e1_2",
+        "--osm_csv", "${local.base}/osm_csv_out",
+        "--t1_2", local.t1_2
+      ]
+    }
+    depends_on { task_key = "osm_preprocess" }
+  }
+
+  task {
+    task_key        = "e1_3"
+    environment_key = "default"
+    spark_python_task {
+      python_file = local.src
+      parameters  = [
+        "--stage", "e1_3",
+        "--re_geocoded", local.re_geo,
+        "--t1_3", local.t1_3
+      ]
+    }
+  }
+}
+
+# Part 2: e2 -> e3
+resource "databricks_job" "pipeline_part2" {
+  name = "duze-dane-pipeline-part2"
+
+  environment {
+    environment_key = "default"
+    spec {
+      client = "2"
+    }
+  }
+
+  task {
+    task_key        = "e2"
+    environment_key = "default"
+    spark_python_task {
+      python_file = local.src
+      parameters  = [
+        "--stage", "e2",
+        "--t1_5", local.t1_5,
+        "--t1_2", local.t1_2,
+        "--t1_3", local.t1_3,
+        "--t2", local.t2
+      ]
+    }
+  }
+
+  task {
+    task_key        = "e3"
+    environment_key = "default"
+    spark_python_task {
+      python_file = local.src
+      parameters  = [
+        "--stage", "e3",
+        "--t2", local.t2,
+        "--t3", local.t3
+      ]
+    }
+    depends_on { task_key = "e2" }
   }
 }

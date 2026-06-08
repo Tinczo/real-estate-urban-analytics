@@ -3,7 +3,7 @@ import sys
 import math
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
-    col, broadcast, udf, split, corr, lit
+    col, broadcast, udf, split, lit
 )
 from pyspark.sql.types import StringType
 
@@ -116,15 +116,16 @@ def run_e1_2(spark, input_path, output_path):
 def _logic_e1_3(spark, input_path):
     df = spark.read.option("header", "true").option("sep", ";").csv(input_path)
     
+    from pyspark.sql.functions import expr
     df = df.select(
         col("Miejscowość").alias("miasto"),
-        col("Cena m2").cast("double").alias("cenaM2"),
-        col("Cena całkowita").cast("double").alias("cenaCalkowita"),
-        col("Powierzchnia").cast("double").alias("powierzchnia"),
-        col("lat").cast("double"),
-        col("lon").cast("double")
+        expr("try_cast(`Cena m2` as double)").alias("cenaM2"),
+        expr("try_cast(`Cena całkowita` as double)").alias("cenaCalkowita"),
+        expr("try_cast(`Powierzchnia` as double)").alias("powierzchnia"),
+        expr("try_cast(lat as double)").alias("lat"),
+        expr("try_cast(lon as double)").alias("lon")
     ).filter(~((col("lat") == 0.0) & (col("lon") == 0.0))) \
-     .dropna(subset=["cenaM2", "cenaCalkowita", "powierzchnia"])
+     .dropna(subset=["cenaM2", "cenaCalkowita", "powierzchnia", "lat", "lon"])
     
     geohash_udf = udf(lambda lat, lon: geohash_encode(lat, lon, 6), StringType())
     df = df.withColumn("geoId", geohash_udf("lat", "lon"))
@@ -211,81 +212,151 @@ def compute_indicators(key, iterator):
         yield f"{offer['miasto']}|{key}\t,{key},{offer['cenaM2']},{offer['cenaCalkowita']},{offer['powierzchnia']},{offer['miasto']},{wsk_przep},{ind_handlu},{ind_gastro},{ind_rekr},{ind_eduk},{wsp_halas}"
 
 def _logic_e2(stops_df, pois_df, offers_df):
-    stops_rdd = stops_df.rdd.map(lambda r: (r.geoId, ('stop', r.asDict())))
-    pois_rdd = pois_df.rdd.map(lambda r: (r.geoId, ('poi', r.asDict())))
-    offers_rdd = offers_df.rdd.map(lambda r: (r.geoId, ('offer', r.asDict())))
-    
-    joined_rdd = stops_rdd.union(pois_rdd).union(offers_rdd)
-    
-    res_rdd = joined_rdd.groupByKey().mapPartitions(lambda it: (out for key, vals in it for out in compute_indicators(key, [(key, v) for v in vals])))
-    return res_rdd
+    import pandas as pd
+    from pyspark.sql.types import StructType, StructField, StringType as ST, DoubleType as DT
+
+    stops_df  = stops_df.withColumn("_type", lit("stop"))
+    pois_df   = pois_df.withColumn("_type", lit("poi")) \
+                       .withColumn("stop_lat", lit(None).cast("double")) \
+                       .withColumn("stop_lon", lit(None).cast("double")) \
+                       .withColumn("score",    lit(None).cast("double")) \
+                       .withColumn("miasto",   lit(None).cast("string")) \
+                       .withColumn("cenaM2",   lit(None).cast("double")) \
+                       .withColumn("cenaCalkowita", lit(None).cast("double")) \
+                       .withColumn("powierzchnia",  lit(None).cast("double"))
+    offers_df = offers_df.withColumn("_type", lit("offer")) \
+                         .withColumn("stop_lat",     lit(None).cast("double")) \
+                         .withColumn("stop_lon",     lit(None).cast("double")) \
+                         .withColumn("score",        lit(None).cast("double")) \
+                         .withColumn("category",     lit(None).cast("string")) \
+                         .withColumn("waga_obiektu", lit(None).cast("double"))
+    stops_df  = stops_df \
+                    .withColumn("miasto",        lit(None).cast("string")) \
+                    .withColumn("cenaM2",        lit(None).cast("double")) \
+                    .withColumn("cenaCalkowita", lit(None).cast("double")) \
+                    .withColumn("powierzchnia",  lit(None).cast("double")) \
+                    .withColumn("category",      lit(None).cast("string")) \
+                    .withColumn("waga_obiektu",  lit(None).cast("double")) \
+                    .withColumn("lat",           lit(None).cast("double")) \
+                    .withColumn("lon",           lit(None).cast("double"))
+
+    cols = ["geoId", "_type", "stop_lat", "stop_lon", "score",
+            "lat", "lon", "category", "waga_obiektu",
+            "miasto", "cenaM2", "cenaCalkowita", "powierzchnia"]
+    unified = stops_df.select(cols).union(pois_df.select(cols)).union(offers_df.select(cols))
+
+    out_schema = StructType([
+        StructField("line", ST(), True)
+    ])
+
+    def process_group(pdf):
+        import math as _math
+        rows = pdf.to_dict("records")
+        stops  = [r for r in rows if r["_type"] == "stop"]
+        pois   = [r for r in rows if r["_type"] == "poi"]
+        offers = [r for r in rows if r["_type"] == "offer"]
+        if not offers:
+            return pd.DataFrame({"line": []})
+        key = rows[0]["geoId"]
+        iterator = [(key, ("stop",  r)) for r in stops] + \
+                   [(key, ("poi",   r)) for r in pois]  + \
+                   [(key, ("offer", r)) for r in offers]
+        lines = list(compute_indicators(key, iterator))
+        return pd.DataFrame({"line": lines})
+
+    result_df = unified.groupBy("geoId").applyInPandas(process_group, schema=out_schema)
+    return result_df
 
 def run_e2(spark, t1_5_dir, t1_2_dir, t1_3_dir, output_dir):
     print("==> Running E2: Join & Indicators calculation")
-    stops_df = spark.read.parquet(t1_5_dir)
-    pois_df = spark.read.parquet(t1_2_dir)
+    stops_df  = spark.read.parquet(t1_5_dir)
+    pois_df   = spark.read.parquet(t1_2_dir)
     offers_df = spark.read.parquet(t1_3_dir)
-    
-    res_rdd = _logic_e2(stops_df, pois_df, offers_df)
-    res_rdd.saveAsTextFile(output_dir)
+    result_df = _logic_e2(stops_df, pois_df, offers_df)
+    result_df.write.mode("overwrite").text(output_dir)
 
-def _logic_e3(rdd):
-    def parse_line(line):
-        def f(s):
-            try: return float(s)
-            except: return 0.0
-        csv_part = line.split('\t')[1]
-        parts = csv_part.split(',')
-        return {
-            'miasto': parts[5],
-            'cenaM2': f(parts[2]),
-            'cenaCalkowita': f(parts[3]),
-            'powierzchnia': f(parts[4]),
-            'wskPrzep': f(parts[6]),
-            'indHandlu': f(parts[7]),
-            'indGastro': f(parts[8]),
-            'indRekr': f(parts[9]),
-            'indEduk': f(parts[10]),
-            'wspHalas': f(parts[11])
-        }
-        
-    df = rdd.map(parse_line).toDF()
-    
+def _logic_e3(spark, input_dir):
+    from pyspark.sql.functions import split as fsplit
+    df = spark.read.text(input_dir)
+    df = df.withColumnRenamed("value", "line")
+
+    def f(s):
+        try: return float(s)
+        except: return 0.0
+
+    from pyspark.sql.types import StructType, StructField, StringType as ST, DoubleType as DT
+    parse_schema = StructType([
+        StructField("miasto",        ST()),
+        StructField("cenaM2",        DT()),
+        StructField("cenaCalkowita", DT()),
+        StructField("powierzchnia",  DT()),
+        StructField("wskPrzep",      DT()),
+        StructField("indHandlu",     DT()),
+        StructField("indGastro",     DT()),
+        StructField("indRekr",       DT()),
+        StructField("indEduk",       DT()),
+        StructField("wspHalas",      DT()),
+    ])
+
+    import pandas as pd
+    def parse_lines(iterator):
+        for pdf in iterator:
+            records = []
+            for line in pdf["line"]:
+                try:
+                    csv_part = line.split('\t')[1]
+                    parts = csv_part.split(',')
+                    records.append({
+                        'miasto':        parts[5],
+                        'cenaM2':        f(parts[2]),
+                        'cenaCalkowita': f(parts[3]),
+                        'powierzchnia':  f(parts[4]),
+                        'wskPrzep':      f(parts[6]),
+                        'indHandlu':     f(parts[7]),
+                        'indGastro':     f(parts[8]),
+                        'indRekr':       f(parts[9]),
+                        'indEduk':       f(parts[10]),
+                        'wspHalas':      f(parts[11]),
+                    })
+                except Exception:
+                    pass
+            yield pd.DataFrame(records) if records else pd.DataFrame(columns=[s.name for s in parse_schema])
+
+    parsed_df = df.mapInPandas(parse_lines, schema=parse_schema)
+
     indicators = ['wskPrzep', 'indHandlu', 'indGastro', 'indRekr', 'indEduk', 'wspHalas']
-    prices = ['cenaM2', 'cenaCalkowita', 'powierzchnia']
-    
-    aggs = []
-    for x in indicators:
-        for y in prices:
-            aggs.append(corr(x, y).alias(f"{x}_{y}"))
-            
-    res_df = df.groupBy("miasto").agg(*aggs)
-    
-    def format_output(row):
-        out = []
-        mapping = {
-            'wskPrzep': 'wsk_przepustowosci', 'indHandlu': 'ind_handlu',
-            'indGastro': 'ind_gastro', 'indRekr': 'ind_rekreacji',
-            'indEduk': 'ind_edukacji', 'wspHalas': 'wsp_halas'
-        }
-        for ind in indicators:
-            c_m2 = row[f"{ind}_cenaM2"] or 0.0
-            c_cal = row[f"{ind}_cenaCalkowita"] or 0.0
-            c_pow = row[f"{ind}_powierzchnia"] or 0.0
-            
-            fmt = lambda v: f"{v:.6f}" if not math.isnan(v) else "0.000000"
-            line = f"{row['miasto']}\t{mapping[ind]},{fmt(c_m2)},{fmt(c_cal)},{fmt(c_pow)}"
-            out.append(line)
-        return out
-        
-    final_rdd = res_df.rdd.flatMap(format_output)
-    return final_rdd
+    prices     = ['cenaM2', 'cenaCalkowita', 'powierzchnia']
+
+    mapping = {
+        'wskPrzep': 'wsk_przepustowosci', 'indHandlu': 'ind_handlu',
+        'indGastro': 'ind_gastro', 'indRekr': 'ind_rekreacji',
+        'indEduk': 'ind_edukacji', 'wspHalas': 'wsp_halas'
+    }
+
+    out_schema = StructType([StructField("line", ST())])
+
+    def compute_corr_and_format(iterator):
+        for pdf in iterator:
+            rows = []
+            for miasto, grp in pdf.groupby("miasto"):
+                for ind in indicators:
+                    vals = []
+                    for price in prices:
+                        try:
+                            c = grp[ind].corr(grp[price])
+                        except Exception:
+                            c = float('nan')
+                        v = 0.0 if (c is None or c != c) else c
+                        vals.append(f"{v:.6f}")
+                    rows.append({"line": f"{miasto}\t{mapping[ind]},{vals[0]},{vals[1]},{vals[2]}"})
+            yield pd.DataFrame(rows) if rows else pd.DataFrame({"line": pd.Series([], dtype=str)})
+
+    return parsed_df.mapInPandas(compute_corr_and_format, schema=out_schema)
 
 def run_e3(spark, input_dir, output_dir):
     print("==> Running E3: Pearson Correlation Matrix")
-    rdd = spark.sparkContext.textFile(input_dir)
-    final_rdd = _logic_e3(rdd)
-    final_rdd.saveAsTextFile(output_dir)
+    result_df = _logic_e3(spark, input_dir)
+    result_df.write.mode("overwrite").text(output_dir)
 
 def run_prod(spark, args):
     print("==> Running PROD: Holistic DAG Execution Mode")
@@ -319,7 +390,9 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    spark = SparkSession.builder.appName(f"PySpark Pipeline: {args.stage}").getOrCreate()
+    spark = SparkSession.builder.appName(f"PySpark Pipeline: {args.stage}") \
+        .config("spark.sql.ansi.enabled", "false") \
+        .getOrCreate()
     
     if args.stage == "prod":
         run_prod(spark, args)
