@@ -315,6 +315,43 @@ resource "databricks_job" "experiments" {
   }
 }
 
+resource "databricks_job" "experiments_sql" {
+  name = "duze-dane-experiments-sql"
+
+  environment {
+    environment_key = "default"
+    spec {
+      client = "2"
+    }
+  }
+
+  task {
+    task_key        = "exp_df_e1_5"
+    environment_key = "default"
+    spark_python_task {
+      python_file = local.src
+      parameters  = [
+        "--stage", "e1_5",
+        "--t1_1", local.t1_1,
+        "--t1_5", "${local.base}/exp_df_e1_5"
+      ]
+    }
+  }
+
+  task {
+    task_key        = "exp_sql_e1_5"
+    environment_key = "default"
+    spark_python_task {
+      python_file = local.src
+      parameters  = [
+        "--stage", "e1_5_sql",
+        "--t1_1", local.t1_1,
+        "--t1_5", "${local.base}/exp_sql_e1_5"
+      ]
+    }
+  }
+}
+
 # Part 1: osm_preprocess -> e1_1 -> e1_5 -> e1_2 -> e1_3
 resource "databricks_job" "pipeline_part1" {
   name = "duze-dane-pipeline-part1"

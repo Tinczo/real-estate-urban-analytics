@@ -95,6 +95,20 @@ def run_e1_5(spark, input_path, output_path, reducers=1):
     agg_df = _logic_e1_5(df, reducers)
     agg_df.write.parquet(output_path, mode="overwrite")
 
+def run_e1_5_sql(spark, input_path, output_path, reducers=1):
+    print(f"==> Running E1.5-SQL: GTFS Aggregation via Spark SQL (reducers={reducers})")
+    df = spark.read.parquet(input_path)
+    if reducers:
+        spark.conf.set("spark.sql.shuffle.partitions", str(reducers))
+    df.createOrReplaceTempView("stop_times_raw")
+    agg_df = spark.sql("""
+        SELECT stop_id, stop_lat, stop_lon, geoId, COUNT(*) AS score
+        FROM stop_times_raw
+        WHERE CAST(SPLIT(arrival_time, ':')[0] AS INT) BETWEEN 7 AND 9
+        GROUP BY stop_id, stop_lat, stop_lon, geoId
+    """)
+    agg_df.write.parquet(output_path, mode="overwrite")
+
 def _logic_e1_2(spark, input_path):
     df = spark.read.csv(input_path, header=True)
     df = df.select(
@@ -373,7 +387,7 @@ def run_prod(spark, args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="PySpark GTFS/RealEstate Pipeline")
-    parser.add_argument("--stage", required=True, choices=["e1_1", "e1_5", "e1_2", "e1_3", "e2", "e3", "all", "prod"])
+    parser.add_argument("--stage", required=True, choices=["e1_1", "e1_5", "e1_5_sql", "e1_2", "e1_3", "e2", "e3", "all", "prod"])
     parser.add_argument("--stop_times", default="/gtfs/stop_times.txt")
     parser.add_argument("--gtfs_cache", default="/gtfs")
     parser.add_argument("--osm_csv", default="/osm_csv")
@@ -400,6 +414,8 @@ if __name__ == "__main__":
             run_e1_1(spark, args.stop_times, args.gtfs_cache, args.t1_1, args.disable_broadcast)
         if args.stage in ["e1_5", "all"]:
             run_e1_5(spark, args.t1_1, args.t1_5, args.reducers)
+        if args.stage == "e1_5_sql":
+            run_e1_5_sql(spark, args.t1_1, args.t1_5, args.reducers)
         if args.stage in ["e1_2", "all"]:
             run_e1_2(spark, args.osm_csv, args.t1_2)
         if args.stage in ["e1_3", "all"]:
