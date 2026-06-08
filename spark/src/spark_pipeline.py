@@ -335,23 +335,22 @@ def _logic_e3(spark, input_dir):
 
     out_schema = StructType([StructField("line", ST())])
 
-    def compute_corr_and_format(iterator):
-        for pdf in iterator:
-            rows = []
-            for miasto, grp in pdf.groupby("miasto"):
-                for ind in indicators:
-                    vals = []
-                    for price in prices:
-                        try:
-                            c = grp[ind].corr(grp[price])
-                        except Exception:
-                            c = float('nan')
-                        v = 0.0 if (c is None or c != c) else c
-                        vals.append(f"{v:.6f}")
-                    rows.append({"line": f"{miasto}\t{mapping[ind]},{vals[0]},{vals[1]},{vals[2]}"})
-            yield pd.DataFrame(rows) if rows else pd.DataFrame({"line": pd.Series([], dtype=str)})
+    def compute_corr_for_miasto(pdf):
+        rows = []
+        for ind in indicators:
+            vals = []
+            for price in prices:
+                try:
+                    c = pdf[ind].corr(pdf[price])
+                except Exception:
+                    c = float('nan')
+                v = 0.0 if (c is None or c != c) else c
+                vals.append(f"{v:.6f}")
+            miasto = pdf["miasto"].iloc[0] if len(pdf) > 0 else ""
+            rows.append({"line": f"{miasto}\t{mapping[ind]},{vals[0]},{vals[1]},{vals[2]}"})
+        return pd.DataFrame(rows)
 
-    return parsed_df.mapInPandas(compute_corr_and_format, schema=out_schema)
+    return parsed_df.groupBy("miasto").applyInPandas(compute_corr_for_miasto, schema=out_schema)
 
 def run_e3(spark, input_dir, output_dir):
     print("==> Running E3: Pearson Correlation Matrix")
