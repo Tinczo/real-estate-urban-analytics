@@ -1,4 +1,3 @@
-# Volume w Unity Catalog do przechowywania danych wejściowych i wyników
 resource "databricks_schema" "duze_dane" {
   catalog_name = "workspace"
   name         = "duze_dane"
