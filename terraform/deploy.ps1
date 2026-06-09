@@ -1,16 +1,14 @@
 # deploy.ps1 - Uruchamia terraform apply i wgrywa dane do Databricks Unity Catalog Volume
-# Uzycie: .\deploy.ps1 [-SkipTerraform] [-SkipUpload] [-SkipSrc]
+# Uzycie: .\deploy.ps1 [-SkipTerraform] [-SkipUpload]
 param(
     [switch]$SkipTerraform,
-    [switch]$SkipUpload,
-    [switch]$SkipSrc
+    [switch]$SkipUpload
 )
 
 $ErrorActionPreference = "Stop"
 $ROOT      = Split-Path $PSScriptRoot -Parent
 $TERRAFORM = $PSScriptRoot
 $DATA      = "$ROOT\data"
-$SPARK_SRC = "$ROOT\spark\src\spark_pipeline.py"
 
 function Write-Step { param($msg) Write-Host "`n==> $msg" -ForegroundColor Cyan }
 function Write-Ok   { param($msg) Write-Host "    OK: $msg" -ForegroundColor Green }
@@ -30,7 +28,7 @@ if (-not $SkipTerraform) {
 }
 
 # -- Sprawdz databricks CLI ---------------------------------------------------
-if (-not $SkipUpload -or -not $SkipSrc) {
+if (-not $SkipUpload) {
     $dbx = Get-Command databricks -ErrorAction SilentlyContinue
     if (-not $dbx) { Write-Fail "Nie znaleziono 'databricks' CLI. Zainstaluj: winget install Databricks.DatabricksCLI" }
 }
@@ -62,13 +60,5 @@ if (-not $SkipUpload) {
     Upload-Folder "$DATA\real_estate_geocoded" "$BASE/real_estate_geocoded" "Real Estate geocoded"
 }
 
-# -- 3. Upload spark_pipeline.py ----------------------------------------------
-if (-not $SkipSrc) {
-    Write-Step "Upload spark_pipeline.py -> /Volumes/workspace/duze_dane/data/src/spark_pipeline.py"
-    if (-not (Test-Path $SPARK_SRC)) { Write-Fail "Nie znaleziono $SPARK_SRC" }
-    databricks fs cp --overwrite "$SPARK_SRC" "dbfs:/Volumes/workspace/duze_dane/data/src/spark_pipeline.py"
-    if ($LASTEXITCODE -ne 0) { Write-Fail "Upload spark_pipeline.py failed" }
-    Write-Ok "spark_pipeline.py uploaded"
-}
 
 Write-Host "`n[DONE] Deploy complete." -ForegroundColor Green
